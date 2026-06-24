@@ -16,7 +16,6 @@ import {
   FileText,
   X,
 } from "lucide-react";
-import { generateMockData } from "@/data/mockData";
 import { useAppContext } from "@/store/appStore";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
@@ -163,8 +162,6 @@ export default function InputPage() {
           type: "SET_UPLOADED_COUNT",
           payload: { count: data.count, preview: data.preview || [] },
         });
-        // Load mock data into candidatesData for compatibility
-        dispatch({ type: "LOAD_DATA", payload: generateMockData().slice(0, data.count) });
         dispatch({ type: "SET_STATUS", payload: "idle" });
 
         setUploadStatus("success");
@@ -209,7 +206,6 @@ export default function InputPage() {
               preview: [],
             },
           });
-          dispatch({ type: "LOAD_DATA", payload: generateMockData().slice(0, status.candidates_loaded) });
           dispatch({ type: "SET_STATUS", payload: "idle" });
           setUploadStatus("success");
           setValidation({
@@ -223,53 +219,14 @@ export default function InputPage() {
         }
       }
 
-      // Fall back to mock data loaded locally
-      const data = generateMockData();
-      dispatch({ type: "LOAD_DATA", payload: data });
-      dispatch({
-        type: "SET_UPLOADED_COUNT",
-        payload: {
-          count: data.length,
-          preview: data.slice(0, 3).map(d => ({
-            candidate_id: d.candidate_id,
-            current_title: d.current_title,
-            current_company: d.current_company,
-            location: d.location,
-            years_of_experience: d.years_of_experience,
-          })),
-        },
-      });
+      throw new Error("No candidates on backend. Please upload a real candidate file instead of using sample data.");
+    } catch (err: unknown) {
       dispatch({ type: "SET_STATUS", payload: "idle" });
-      setUploadStatus("success");
-      setDetectedFormat(".json");
+      setUploadStatus("error");
       setValidation({
-        status: "success",
-        message: `${data.length} sample candidates loaded.`,
-        detail: "Official hackathon sample-candidates.json loaded. Pipeline will use the backend for real ranking.",
-        count: data.length,
-        preview: data.slice(0, 3).map(d => ({
-          candidate_id: d.candidate_id,
-          current_title: d.current_title,
-          current_company: d.current_company,
-          location: d.location,
-          years_of_experience: d.years_of_experience,
-        })),
-      });
-    } catch {
-      dispatch({ type: "SET_STATUS", payload: "idle" });
-      setUploadStatus("success");
-      const data = generateMockData();
-      dispatch({ type: "LOAD_DATA", payload: data });
-      dispatch({
-        type: "SET_UPLOADED_COUNT",
-        payload: { count: data.length, preview: [] },
-      });
-      setDetectedFormat(".json");
-      setValidation({
-        status: "success",
-        message: `${data.length} sample candidates loaded.`,
-        detail: "Sample data loaded. Ready for ranking.",
-        count: data.length,
+        status: "error",
+        message: "Failed to load sample data.",
+        detail: err instanceof Error ? err.message : "Error connecting to backend.",
       });
     }
   }, [dispatch]);

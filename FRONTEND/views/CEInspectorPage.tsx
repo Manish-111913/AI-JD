@@ -6,8 +6,8 @@ import {
   BarChart, Bar, Cell, CartesianGrid
 } from "recharts";
 import { useAppContext } from "@/store/appStore";
-import { generateMockData, RankedCandidate } from "@/data/mockData";
-import { Cpu, TrendingUp, TrendingDown, Search } from "lucide-react";
+import { RankedCandidate } from "@/data/mockData";
+import { Cpu, TrendingUp, TrendingDown, Search, AlertTriangle } from "lucide-react";
 
 const BATCH_DATA = Array.from({ length: 10 }, (_, i) => ({
   batch: i + 1,
@@ -38,7 +38,21 @@ function TooltipBox({ active, payload }: any) {
 export default function CEInspectorPage() {
   const { state, dispatch } = useAppContext();
   const [logSearch, setLogSearch] = useState("");
-  const results: RankedCandidate[] = state.rankingResults.length > 0 ? state.rankingResults : generateMockData();
+  const results: RankedCandidate[] = (state.backendResults || []) as unknown as RankedCandidate[];
+
+  if (results.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-80px)]">
+        <div className="text-center space-y-4 max-w-sm">
+          <AlertTriangle className="w-10 h-10 text-muted-foreground mx-auto" />
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">No data available</h2>
+            <p className="text-[13px] text-muted-foreground mt-1">Please upload candidates and run the ranking pipeline first.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const scatterData = useMemo(() =>
     results.map(c => ({ ...c, x: c.algo_rank, y: c.rank })),

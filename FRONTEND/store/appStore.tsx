@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
-import { RankedCandidate, generateMockData } from '../data/mockData';
+import { RankedCandidate } from '../data/mockData';
 
 export type AppStatus = 'idle' | 'loading' | 'ranking' | 'done' | 'error';
 export type ExecutionMode = 'competition' | 'demo';

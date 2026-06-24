@@ -7,8 +7,8 @@ import {
   CartesianGrid, Legend, LabelList
 } from "recharts";
 import { useAppContext } from "@/store/appStore";
-import { generateMockData, RankedCandidate } from "@/data/mockData";
-import { BarChart3, Cpu } from "lucide-react";
+import { RankedCandidate } from "@/data/mockData";
+import { BarChart3, Cpu, AlertTriangle } from "lucide-react";
 
 const DISQUALIFIERS = [
   { name: "All-consulting career", key: "consulting" },
@@ -42,7 +42,21 @@ function TooltipBox({ active, payload, label }: any) {
 
 export default function AnalyticsPage() {
   const { state } = useAppContext();
-  const results: RankedCandidate[] = state.rankingResults.length > 0 ? state.rankingResults : generateMockData();
+  const results: RankedCandidate[] = (state.backendResults || []) as unknown as RankedCandidate[];
+
+  if (results.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-80px)]">
+        <div className="text-center space-y-4 max-w-sm">
+          <AlertTriangle className="w-10 h-10 text-muted-foreground mx-auto" />
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">No data available</h2>
+            <p className="text-[13px] text-muted-foreground mt-1">Please upload candidates and run the ranking pipeline first.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const scoreHist = useMemo(() => {
     const buckets = Array.from({ length: 10 }, (_, i) => ({ range: `${(i * 0.1).toFixed(1)}–${((i + 1) * 0.1).toFixed(1)}`, count: 0 }));

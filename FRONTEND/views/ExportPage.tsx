@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { Download, CheckCircle2, XCircle, ExternalLink, FileText, Github } from "lucide-react";
 import { useAppContext } from "@/store/appStore";
-import { generateMockData, RankedCandidate } from "@/data/mockData";
+import { RankedCandidate } from "@/data/mockData";
 import { validateSubmission, exportToCsv } from "@/utils/csvExport";
 import { Button } from "@/components/ui/button";
 
@@ -21,8 +21,10 @@ const METADATA_FIELDS = [
 
 export default function ExportPage() {
   const { state } = useAppContext();
-  const results: RankedCandidate[] = state.rankingResults.length > 0 ? state.rankingResults : generateMockData();
-  const validation = validateSubmission(results);
+  const results: RankedCandidate[] = (state.backendResults || []) as unknown as RankedCandidate[];
+  const validation = results.length > 0 
+    ? validateSubmission(results) 
+    : { valid: false, checks: [] as Array<{ name: string; passed: boolean; message: string }> };
 
   const [downloaded, setDownloaded] = useState(false);
   const [githubReady, setGithubReady] = useState(false);
@@ -50,6 +52,20 @@ export default function ExportPage() {
     )},
     { label: "submission_metadata.yaml filled", done: metaFilled, auto: false },
   ];
+
+  if (results.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-80px)]">
+        <div className="text-center space-y-4 max-w-sm">
+          <XCircle className="w-10 h-10 text-muted-foreground mx-auto" />
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">No data available</h2>
+            <p className="text-[13px] text-muted-foreground mt-1">Please upload candidates and run the ranking pipeline first.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-8 py-10 space-y-8">

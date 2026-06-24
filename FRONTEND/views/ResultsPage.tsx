@@ -8,7 +8,6 @@ import {
   CheckCircle2, XCircle, SlidersHorizontal, MapPin, Briefcase, Star, Filter,
 } from "lucide-react";
 import { useAppContext, BackendResult } from "@/store/appStore";
-import { generateMockData } from "@/data/mockData";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 
@@ -688,14 +687,10 @@ export default function ResultsPage() {
           if (data.results?.length > 0) {
             dispatch({ type: "SET_BACKEND_RESULTS", payload: data.results });
           } else {
-            const mock = generateMockData();
-            dispatch({ type: "SET_RESULTS", payload: mock });
             dispatch({ type: "SET_STATUS", payload: "done" });
           }
         })
         .catch(() => {
-          const mock = generateMockData();
-          dispatch({ type: "SET_RESULTS", payload: mock });
           dispatch({ type: "SET_STATUS", payload: "done" });
         })
         .finally(() => setIsLoading(false));
@@ -795,6 +790,23 @@ export default function ResultsPage() {
         <div className="text-center space-y-3">
           <div className="w-8 h-8 border-2 border-foreground/20 border-t-foreground rounded-full animate-spin mx-auto" />
           <p className="text-[13px] text-muted-foreground">Loading ranking results…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (allResults.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-[60vh]">
+        <div className="text-center space-y-4 max-w-sm">
+          <AlertTriangle className="w-10 h-10 text-muted-foreground mx-auto" />
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">No data available</h2>
+            <p className="text-[13px] text-muted-foreground mt-1">Please upload candidates and run the ranking pipeline first.</p>
+          </div>
+          <Button onClick={() => router.push("/input")} className="mt-4">
+            Go to Input
+          </Button>
         </div>
       </div>
     );

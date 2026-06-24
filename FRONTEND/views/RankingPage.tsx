@@ -5,69 +5,13 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle2, Cpu, Loader2, ArrowRight, AlertCircle, Wifi, WifiOff, FileText, Users, Zap } from "lucide-react";
 import { useAppContext, PIPELINE_STAGES, BackendResult } from "@/store/appStore";
-import { generateMockData } from "@/data/mockData";
 import { Button } from "@/components/ui/button";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const PROGRESS_WEIGHTS = [5, 5, 10, 10, 15, 10, 15, 30];
 
-// Dynamic mock logs that use actual candidate count
-const buildMockLogs = (count: number, roleTitle: string) => ({
-  1: [
-    `Reading ${count} candidate JSON records…`,
-    "Schema validation: all required fields present",
-    "Location strings normalized (Bengaluru → Bengaluru, India)",
-    `✓ ${count} candidates loaded and data normalized.`,
-  ],
-  2: [
-    `Running title pre-filter on ${count} candidates…`,
-    "Title relevance map loaded from config",
-    `Scoring relevance for role: "${roleTitle}"`,
-    "Non-tech titles → near-zero score applied",
-    "✓ Title pre-filter complete.",
-  ],
-  3: [
-    "Running 7-check honeypot evidence accumulation model…",
-    "⚠ Checking: expert skills with 0 months duration",
-    "⚠ Checking: career / graduation date mismatches",
-    "⚠ Checking: mass application signals (>30 in 30 days)",
-    "✓ Honeypot detection complete.",
-  ],
-  4: [
-    `Building text representations for ${count} candidates…`,
-    "Loading bi-encoder: sentence-transformers/all-MiniLM-L6-v2…",
-    `Embedding ${count} candidates (batch inference)…`,
-    "Computing 3-query cosine similarity (Q1×60% + Q2×30% + Q3×10%)…",
-    "✓ Semantic scoring complete.",
-  ],
-  5: [
-    "Scoring skill trust: proficiency × sigmoid(duration) × log(endorsements)…",
-    "JD category keyword matching running…",
-    "Minimum floor 0.05 applied to all skills.",
-    "✓ Skill trust scoring complete.",
-  ],
-  6: [
-    "Classifying companies: Product / Consulting / Research / Startup…",
-    "Scanning production deployment signals in career descriptions…",
-    "Behavioral multiplier: recency × open_to_work × response_rate × notice…",
-    "✓ Career + behavioral scoring complete.",
-  ],
-  7: [
-    `Computing composite scores for all ${count} candidates…`,
-    `Top 300 shortlisted for CE re-ranking.`,
-    "✓ First-pass complete. Shortlist ready.",
-  ],
-  8: [
-    "Loading cross-encoder/ms-marco-MiniLM-L-6-v2…",
-    "Model ready. CPU inference. No network required.",
-    "CE re-ranking: batch 1/10 complete (32 pairs, 3.2s)",
-    "CE re-ranking: batch 5/10 complete (32 pairs, 3.1s)",
-    "CE re-ranking: batch 10/10 complete (32 pairs, 3.3s)",
-    "CE re-ranking complete. Blending: 40% algo + 60% CE.",
-    "✓ Final ranking complete.",
-  ],
-});
+
 
 export default function RankingPage() {
   const router = useRouter();
@@ -96,7 +40,7 @@ export default function RankingPage() {
   const roleTitle = state.jdData?.role_title || "ML / AI Engineer";
   const jdLocations = state.jdData?.locations?.join(", ") || "India";
   const jdSkills = state.jdData?.hard_skills?.slice(0, 3).map(s => s.name).join(", ") || "ML, NLP, Vector Search";
-  const mockLogs = buildMockLogs(candidateCount, roleTitle);
+
 
   const addLog = (msg: string) => {
     const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -207,51 +151,8 @@ export default function RankingPage() {
     } catch (err) {
       console.error("Real pipeline error:", err);
       addLog(`⚠ Backend pipeline error: ${err instanceof Error ? err.message : String(err)}`);
-      runMockPipeline();
+      dispatch({ type: "SET_STATUS", payload: "error" });
     }
-  };
-
-  // ── Mock Pipeline (fallback / demo) ────────────────────────────────────────────────────
-  const runMockPipeline = () => {
-    setBackendMode("mock");
-    dispatch({ type: "SET_STATUS", payload: "ranking" });
-
-    let cumDelay = 0;
-    PIPELINE_STAGES.forEach((stage, idx) => {
-      setTimeout(() => {
-        activateStage(idx);
-        const lines = mockLogs[stage.id as keyof typeof mockLogs] || [];
-        lines.forEach((line, li) => {
-          setTimeout(() => addLog(line), (li + 1) * (stage.durationMs / (lines.length + 1)));
-        });
-        if (stage.isCE) {
-          for (let b = 1; b <= 10; b++) {
-            setTimeout(() => { setCeBatch(b); setCePair(Math.min(b * Math.ceil(candidateCount / 10), candidateCount)); }, (b / 10) * (stage.durationMs - 300));
-          }
-        }
-      }, cumDelay);
-
-      setTimeout(() => {
-        completeStage(idx);
-        if (idx === PIPELINE_STAGES.length - 1) {
-          const mockData = generateMockData();
-          dispatch({ type: "SET_BACKEND_RESULTS", payload: mockData as unknown as BackendResult[] });
-          dispatch({ type: "SET_STATUS", payload: "done" });
-          const hpCount = Math.floor(mockData.length * 0.08);
-          const promoCount = Math.floor(mockData.length * 0.06);
-          setPipelineStats({
-            candidatesRanked: mockData.length,
-            runtime: 28.4,
-            shortlisted: Math.min(300, candidateCount),
-            promoted: promoCount,
-            honeypots: hpCount,
-          });
-          setShowSummary(true);
-        }
-      }, cumDelay + stage.durationMs);
-
-      cumDelay += stage.durationMs;
-    });
   };
 
   useEffect(() => {
@@ -264,10 +165,14 @@ export default function RankingPage() {
         if (status.candidates_loaded > 0) {
           runRealPipeline();
         } else {
-          runMockPipeline();
+          addLog("⚠ Error: No candidates loaded. Please upload candidates first.");
+          dispatch({ type: "SET_STATUS", payload: "error" });
         }
       })
-      .catch(() => runMockPipeline());
+      .catch(() => {
+        addLog("⚠ Backend connection error.");
+        dispatch({ type: "SET_STATUS", payload: "error" });
+      });
   }, []);
 
   useEffect(() => {
