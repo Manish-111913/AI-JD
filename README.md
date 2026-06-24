@@ -53,6 +53,19 @@ docker compose up --build
 ```
 This builds the backend image from `BACKEND/Dockerfile` and starts the API on port `8000`.
 
+
+### Run the backend directly with Docker
+
+If you want to skip Compose and run the backend container directly:
+
+```bash
+docker build -t ai-jd-backend ./BACKEND
+docker run --rm -p 8000:8000 ai-jd-backend
+```
+
+The backend will be available at `http://localhost:8000`.
+
+
 ### 2. Start the frontend in another terminal
 ```bash
 cd FRONTEND
