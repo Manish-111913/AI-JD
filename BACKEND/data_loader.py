@@ -13,7 +13,70 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+import re
+
 logger = logging.getLogger(__name__)
+
+CANDIDATE_ID_PATTERN = re.compile(r"^CAND_[0-9]{7}$")
+
+
+def validate_candidate_schema(raw: dict) -> tuple[bool, Optional[str]]:
+    """
+    Validate a raw candidate record against the required schema constraints.
+    Returns: (is_valid, error_message)
+    """
+    if not isinstance(raw, dict):
+        return False, "Candidate record must be a JSON object (dict)"
+    
+    # Check top-level required fields
+    for field in ["candidate_id", "profile", "career_history", "education", "skills", "redrob_signals"]:
+        if field not in raw:
+            return False, f"Missing required top-level field: '{field}'"
+            
+    # Validate candidate_id format
+    cid = raw["candidate_id"]
+    if not isinstance(cid, str):
+        return False, f"candidate_id must be a string, got {type(cid)}"
+    if not CANDIDATE_ID_PATTERN.match(cid):
+        return False, f"candidate_id '{cid}' does not match pattern '^CAND_[0-9]{{7}}$'"
+        
+    # Validate profile fields
+    profile = raw["profile"]
+    if not isinstance(profile, dict):
+        return False, "profile field must be a JSON object (dict)"
+        
+    required_profile_fields = [
+        "anonymized_name", "headline", "summary", "location", "country",
+        "years_of_experience", "current_title", "current_company",
+        "current_company_size", "current_industry"
+    ]
+    for field in required_profile_fields:
+        if field not in profile:
+            return False, f"Missing required profile field: '{field}'"
+            
+    # Validate career_history (must be non-empty array)
+    history = raw["career_history"]
+    if not isinstance(history, list):
+        return False, "career_history field must be an array (list)"
+    if len(history) == 0:
+        return False, "career_history must contain at least 1 role"
+        
+    # Validate skills (must be array)
+    skills = raw["skills"]
+    if not isinstance(skills, list):
+        return False, "skills field must be an array (list)"
+        
+    # Validate education (must be array)
+    education = raw["education"]
+    if not isinstance(education, list):
+        return False, "education field must be an array (list)"
+        
+    # Validate redrob_signals (must be dict)
+    signals = raw["redrob_signals"]
+    if not isinstance(signals, dict):
+        return False, "redrob_signals field must be a JSON object (dict)"
+        
+    return True, None
 
 
 def _open_candidate_file(path: Path):
@@ -170,7 +233,7 @@ def stream_candidates(path: Path) -> Generator[dict, None, None]:
     """
     Stream normalized candidates from a JSONL or JSONL.GZ file.
     Yields one normalized candidate dict per line.
-    Skips invalid JSON lines with a warning.
+    Skips invalid JSON lines or schema violations with a warning.
     """
     skipped = 0
     loaded = 0
@@ -182,6 +245,12 @@ def stream_candidates(path: Path) -> Generator[dict, None, None]:
                 continue
             try:
                 raw = json.loads(line)
+                is_valid, err_msg = validate_candidate_schema(raw)
+                if not is_valid:
+                    skipped += 1
+                    if skipped <= 10:
+                        logger.warning(f"Candidate schema validation failed (skipped): {err_msg}")
+                    continue
                 yield normalize_candidate(raw)
                 loaded += 1
             except json.JSONDecodeError as e:
@@ -190,7 +259,7 @@ def stream_candidates(path: Path) -> Generator[dict, None, None]:
                     logger.warning(f"Invalid JSON line (skipped): {e}")
     finally:
         fh.close()
-    logger.info(f"Loaded {loaded} candidates, skipped {skipped} invalid lines")
+    logger.info(f"Loaded {loaded} candidates, skipped/invalidated {skipped} lines")
 
 
 def load_all_candidates(path: Path) -> list[dict]:

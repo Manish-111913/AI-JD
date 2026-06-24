@@ -53,7 +53,7 @@ from config import (
     JD_QUERIES, CE_QUERY, CE_SHORTLIST_SIZE,
     WEIGHTS, CE_WEIGHT, TITLE_GATE_THRESHOLD,
 )
-from data_loader import normalize_candidate, build_candidate_text, build_ce_passage
+from data_loader import normalize_candidate, build_candidate_text, build_ce_passage, validate_candidate_schema
 from scoring_engine import compute_first_pass_score
 from embedding_engine import (
     embed_candidates_batch,
@@ -502,6 +502,10 @@ async def upload_candidates(file: UploadFile = File(...)):
                     raw_list = [raw_list]
                 for i, raw in enumerate(raw_list):
                     try:
+                        is_valid, err_msg = validate_candidate_schema(raw)
+                        if not is_valid:
+                            errors.append(f"Row {i}: {err_msg}")
+                            continue
                         candidates.append(normalize_candidate(raw))
                     except Exception as e:
                         errors.append(f"Row {i}: {str(e)}")
@@ -515,6 +519,10 @@ async def upload_candidates(file: UploadFile = File(...)):
                     continue
                 try:
                     raw = json.loads(line)
+                    is_valid, err_msg = validate_candidate_schema(raw)
+                    if not is_valid:
+                        errors.append(f"Line {i+1}: {err_msg}")
+                        continue
                     candidates.append(normalize_candidate(raw))
                 except json.JSONDecodeError as e:
                     errors.append(f"Line {i+1}: {str(e)}")
@@ -631,7 +639,7 @@ async def rank_candidates(request: Request, body: RankRequest):
                           "message": "Schema validation complete. All required fields present."})
         await asyncio.sleep(0.05)
         yield _sse_event({"stage": 1, "progress": 5, "status": "completed",
-                          "message": f"✓ {len(candidates)} candidates loaded. Data normalized."})
+                          "message": f"✓ {len(candidates)} candidates loaded and validated."})
         await asyncio.sleep(0.1)
 
         # ──────────────────────────────────────────────────────────────────────
@@ -647,6 +655,7 @@ async def rank_candidates(request: Request, body: RankRequest):
         for c in candidates:
             ts = compute_title_relevance_score(c["current_title"])
             title_scores[c["candidate_id"]] = ts
+            c["_title_score"] = ts
             if ts >= 0.90:
                 core_count += 1
             elif ts >= 0.30:
@@ -663,40 +672,24 @@ async def rank_candidates(request: Request, body: RankRequest):
                           )})
         await asyncio.sleep(0.1)
 
-        # ──────────────────────────────────────────────────────────────────────
-        # STAGE 3: Honeypot Detection
-        # ──────────────────────────────────────────────────────────────────────
-        from honeypot_detector import detect_honeypot
-        yield _sse_event({"stage": 3, "stage_name": "Detecting honeypot profiles",
-                          "status": "active", "progress": 11,
-                          "message": "Running 7-check evidence accumulation model…"})
-        await asyncio.sleep(0.05)
-
-        honeypot_results = {}
-        flagged_count = 0
-        for c in candidates:
-            hp = detect_honeypot(c)
-            honeypot_results[c["candidate_id"]] = hp
-            if hp["honeypot_confidence"] > 0.55:
-                flagged_count += 1
-                yield _sse_event({"stage": 3, "status": "active", "progress": 12,
-                                  "message": f"⚠ {c['candidate_id']}: {hp['honeypot_flags'][0] if hp['honeypot_flags'] else 'suspicious profile'}"})
-                await asyncio.sleep(0.01)
-
-        yield _sse_event({"stage": 3, "progress": 20, "status": "completed",
-                          "message": f"✓ Honeypot detection complete. {flagged_count} flagged (confidence > 0.55)."})
-        await asyncio.sleep(0.1)
+        # Initialize Feature Cache
+        from feature_cache import FeatureCache
+        cache = FeatureCache()
 
         # ──────────────────────────────────────────────────────────────────────
-        # STAGE 4: Semantic Similarity (Embeddings)
+        # STAGE 4: Semantic Similarity (Embedding Search)
         # ──────────────────────────────────────────────────────────────────────
         yield _sse_event({"stage": 4, "stage_name": "Computing semantic similarity",
                           "status": "active", "progress": 21,
-                          "message": "Building candidate text representations…"})
+                          "message": "Filtering non-tech profiles & building text representations…"})
         await asyncio.sleep(0.1)
 
-        # Build candidate texts
-        candidate_texts = [build_candidate_text(c) for c in candidates]
+        # Filter out fast-filtered candidates to optimize embedding & scoring
+        tech_candidates = [c for c in candidates if c["_title_score"] >= TITLE_GATE_THRESHOLD]
+        if not tech_candidates:
+            tech_candidates = candidates
+
+        candidate_texts = [build_candidate_text(c) for c in tech_candidates]
 
         yield _sse_event({"stage": 4, "progress": 24, "status": "active",
                           "message": f"Loading bi-encoder model: sentence-transformers/all-MiniLM-L6-v2…"})
@@ -704,7 +697,7 @@ async def rank_candidates(request: Request, body: RankRequest):
 
         try:
             yield _sse_event({"stage": 4, "progress": 26, "status": "active",
-                              "message": f"Embedding {len(candidates)} candidates (batch inference)…"})
+                              "message": f"Embedding {len(tech_candidates)} candidate profiles (optimized batch inference)…"})
 
             loop = asyncio.get_event_loop()
             candidate_embeddings = await loop.run_in_executor(
@@ -716,8 +709,14 @@ async def rank_candidates(request: Request, body: RankRequest):
             semantic_scores_arr = await loop.run_in_executor(
                 None, compute_semantic_scores_vectorized, candidate_embeddings
             )
-            semantic_scores = {c["candidate_id"]: float(semantic_scores_arr[i])
-                               for i, c in enumerate(candidates)}
+            semantic_scores = {tech_candidates[i]["candidate_id"]: float(semantic_scores_arr[i])
+                               for i in range(len(tech_candidates))}
+            
+            # Default remaining candidates to 0.0
+            for c in candidates:
+                if c["candidate_id"] not in semantic_scores:
+                    semantic_scores[c["candidate_id"]] = 0.0
+
             _state["embeddings_loaded"] = True
 
         except Exception as e:
@@ -726,64 +725,108 @@ async def rank_candidates(request: Request, body: RankRequest):
             yield _sse_event({"stage": 4, "progress": 29, "status": "active",
                               "message": f"⚠ Embedding model unavailable — using keyword-only scoring: {str(e)[:80]}"})
 
+        # Funnel Filter: Sort by semantic score and take Top 1000
+        tech_candidates.sort(key=lambda c: -semantic_scores.get(c["candidate_id"], 0.0))
+        top_1000 = tech_candidates[:1000]
+
         yield _sse_event({"stage": 4, "progress": 30, "status": "completed",
-                          "message": "✓ Semantic scoring complete."})
+                          "message": f"✓ Embedding search complete. Selected Top {len(top_1000)} candidates."})
         await asyncio.sleep(0.1)
 
         # ──────────────────────────────────────────────────────────────────────
-        # STAGE 5: Skill Trust Scoring
+        # STAGE 3: Honeypot Detection (Only on Top 1000)
+        # ──────────────────────────────────────────────────────────────────────
+        from honeypot_detector import detect_honeypot
+        yield _sse_event({"stage": 3, "stage_name": "Detecting honeypot profiles",
+                          "status": "active", "progress": 11,
+                          "message": "Running 8-check evidence accumulation model on Top 1000…"})
+        await asyncio.sleep(0.05)
+
+        honeypot_results = {}
+        flagged_count = 0
+        for idx, c in enumerate(top_1000):
+            cid = c["candidate_id"]
+            
+            # Check cache
+            cached_feat = cache.get(cid)
+            if cached_feat and "honeypot_confidence" in cached_feat:
+                hp = {
+                    "honeypot_confidence": cached_feat["honeypot_confidence"],
+                    "honeypot_evidence_points": cached_feat["honeypot_evidence_points"],
+                    "honeypot_flags": cached_feat["honeypot_flags"],
+                    "honeypot_penalty": cached_feat["honeypot_penalty"],
+                    "honeypot_tier": cached_feat["honeypot_tier"],
+                }
+            else:
+                hp = detect_honeypot(c)
+                
+            honeypot_results[cid] = hp
+            if hp["honeypot_confidence"] > 0.55:
+                flagged_count += 1
+                yield _sse_event({"stage": 3, "status": "active", "progress": 11 + int((idx / len(top_1000)) * 8),
+                                  "message": f"⚠ {cid}: {hp['honeypot_flags'][0] if hp['honeypot_flags'] else 'suspicious profile'}"})
+                await asyncio.sleep(0.005)
+
+        yield _sse_event({"stage": 3, "progress": 20, "status": "completed",
+                          "message": f"✓ Honeypot detection complete. {flagged_count} flagged in Top 1000."})
+        await asyncio.sleep(0.1)
+
+        # ──────────────────────────────────────────────────────────────────────
+        # STAGE 5: Skill Trust Scoring (Top 1000)
         # ──────────────────────────────────────────────────────────────────────
         yield _sse_event({"stage": 5, "stage_name": "Scoring skill trust",
                           "status": "active", "progress": 31,
-                          "message": "Computing skill trust: proficiency × sigmoid(duration) × log(endorsements) × assessment…"})
-        await asyncio.sleep(0.1)
-        yield _sse_event({"stage": 5, "progress": 35, "status": "active",
-                          "message": "Minimum floor 0.05 applied to all skills. JD category matching running…"})
-        await asyncio.sleep(0.1)
+                          "message": "Scoring skill trust on Top 1000 candidates…"})
+        await asyncio.sleep(0.05)
         yield _sse_event({"stage": 5, "progress": 40, "status": "completed",
-                          "message": "✓ Skill trust scoring complete."})
+                          "message": "✓ Skill trust scoring complete for Top 1000."})
         await asyncio.sleep(0.1)
 
         # ──────────────────────────────────────────────────────────────────────
-        # STAGE 6: Career + Behavioral Analysis
+        # STAGE 6: Career + Behavioral Analysis (Top 1000)
         # ──────────────────────────────────────────────────────────────────────
         yield _sse_event({"stage": 6, "stage_name": "Analyzing career + behavioral signals",
                           "status": "active", "progress": 41,
-                          "message": "Classifying companies: Product / Consulting / Research / Startup…"})
-        await asyncio.sleep(0.1)
-        yield _sse_event({"stage": 6, "progress": 44, "status": "active",
-                          "message": "Scanning for production deployment signals in career descriptions…"})
+                          "message": "Scanning company history and availability multiplier on Top 1000…"})
         await asyncio.sleep(0.05)
-        yield _sse_event({"stage": 6, "progress": 47, "status": "active",
-                          "message": "Behavioral multiplier: recency × open_to_work × response_rate × notice…"})
-        await asyncio.sleep(0.1)
         yield _sse_event({"stage": 6, "progress": 50, "status": "completed",
-                          "message": "✓ Career + behavioral scoring complete."})
+                          "message": "✓ Career + behavioral scoring complete for Top 1000."})
         await asyncio.sleep(0.1)
 
         # ──────────────────────────────────────────────────────────────────────
-        # STAGE 7: First-Pass Composite Scoring & Shortlisting
+        # STAGE 7: First-Pass Composite Scoring & Shortlisting (Top 1000)
         # ──────────────────────────────────────────────────────────────────────
         yield _sse_event({"stage": 7, "stage_name": "First-pass ranking — shortlisting",
                           "status": "active", "progress": 51,
-                          "message": f"Computing composite scores for all {len(candidates)} candidates…"})
+                          "message": f"Computing composite scores for Top 1000 candidates…"})
         await asyncio.sleep(0.1)
 
         features_map = {}
         all_scores = []
-        for c in candidates:
-            sem = semantic_scores.get(c["candidate_id"], 0.0)
-            features = compute_first_pass_score(c, semantic_score=sem)
-            # Merge honeypot result into features
-            hp = honeypot_results.get(c["candidate_id"], {})
-            features.update(hp)
-            features_map[c["candidate_id"]] = features
-            all_scores.append((c["candidate_id"], features["first_pass_score"]))
+        cache_updated = False
+        
+        for c in top_1000:
+            cid = c["candidate_id"]
+            sem = semantic_scores.get(cid, 0.0)
+            
+            # Check cache
+            feat = cache.get(cid)
+            if feat is None:
+                feat = compute_first_pass_score(c, semantic_score=sem)
+                hp = honeypot_results.get(cid, {})
+                feat.update(hp)
+                cache.set(cid, feat)
+                cache_updated = True
+                
+            features_map[cid] = feat
+            all_scores.append((cid, feat["first_pass_score"]))
+
+        if cache_updated:
+            cache.save()
 
         all_scores.sort(key=lambda x: x[1], reverse=True)
         shortlist_ids = {cid for cid, _ in all_scores[:CE_SHORTLIST_SIZE]}
-
-        shortlisted_candidates = [c for c in candidates if c["candidate_id"] in shortlist_ids]
+        shortlisted_candidates = [c for c in top_1000 if c["candidate_id"] in shortlist_ids]
 
         yield _sse_event({"stage": 7, "progress": 60, "status": "completed",
                           "message": (
@@ -793,7 +836,7 @@ async def rank_candidates(request: Request, body: RankRequest):
         await asyncio.sleep(0.1)
 
         # ──────────────────────────────────────────────────────────────────────
-        # STAGE 8: Cross-Encoder Re-Ranking
+        # STAGE 8: Cross-Encoder Re-Ranking (Top 300)
         # ──────────────────────────────────────────────────────────────────────
         yield _sse_event({"stage": 8, "stage_name": "Cross-encoder re-ranking",
                           "status": "active", "progress": 61,
@@ -894,8 +937,9 @@ async def rank_candidates(request: Request, body: RankRequest):
         # For non-shortlisted candidates, apply 0.82 ceiling cap
         for cid, score in all_scores:
             if cid not in shortlist_ids:
-                features_map[cid]["ce_score"] = 0.0
-                features_map[cid]["blended_score"] = score * 0.82
+                if cid in features_map:
+                    features_map[cid]["ce_score"] = 0.0
+                    features_map[cid]["blended_score"] = score * 0.82
 
         ce_weight_pct = int(CE_WEIGHT * 100)
         algo_pct = 100 - ce_weight_pct
