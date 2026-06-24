@@ -155,6 +155,325 @@ async def get_jd():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# POST /api/upload-jd  — Upload & parse a Job Description file
+# ─────────────────────────────────────────────────────────────────────────────
+@app.post("/api/upload-jd")
+async def upload_jd(file: UploadFile = File(...)):
+    """
+    Accept a JD file (PDF, DOCX, or TXT).
+    Extract text, run NLP analysis, return structured JD requirements.
+    """
+    import re as _re
+    import tempfile
+
+    content = await file.read()
+    filename = (file.filename or "").lower()
+    jd_text = ""
+
+    # ── Extract text based on file type ──────────────────────────────────────
+    try:
+        if filename.endswith(".pdf"):
+            try:
+                import pdfplumber
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(content)
+                    tmp_path = tmp.name
+                with pdfplumber.open(tmp_path) as pdf:
+                    jd_text = "\n".join(
+                        page.extract_text() or "" for page in pdf.pages
+                    )
+                import os as _os; _os.unlink(tmp_path)
+            except ImportError:
+                # fallback: try PyPDF2
+                try:
+                    import io as _io
+                    import PyPDF2
+                    reader = PyPDF2.PdfReader(_io.BytesIO(content))
+                    jd_text = "\n".join(
+                        (page.extract_text() or "") for page in reader.pages
+                    )
+                except ImportError:
+                    jd_text = content.decode("utf-8", errors="replace")
+
+        elif filename.endswith(".docx"):
+            try:
+                from docx import Document
+                import io as _io
+                doc = Document(_io.BytesIO(content))
+                jd_text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            except ImportError:
+                jd_text = content.decode("utf-8", errors="replace")
+
+        else:
+            # Plain text or unknown — decode as UTF-8
+            jd_text = content.decode("utf-8", errors="replace")
+
+    except Exception as e:
+        logger.warning(f"Text extraction failed: {e}")
+        jd_text = content.decode("utf-8", errors="replace")
+
+    if not jd_text.strip():
+        raise HTTPException(422, "Could not extract text from the uploaded file.")
+
+    # ── Derive Role Title ─────────────────────────────────────────────────────
+    lines = [l.strip() for l in jd_text.splitlines() if l.strip()]
+    role_title = "Job Description"
+    title_patterns = [
+        r"(?:position|role|job title|title)[:\s]+(.+)",
+        r"^(?:we are hiring|hiring for|looking for)[:\s]+(.+)",
+        r"^(?:job title|position title)[:\s]*[:\-]?\s*(.+)",
+    ]
+    # First non-empty short line is often the title
+    for line in lines[:8]:
+        if 3 <= len(line.split()) <= 12 and not line.lower().startswith(("about", "company", "we ", "our ")):
+            role_title = line
+            break
+    for pat in title_patterns:
+        m = _re.search(pat, jd_text[:2000], _re.IGNORECASE | _re.MULTILINE)
+        if m:
+            role_title = m.group(1).strip()
+            break
+
+    # ── Extract experience range ──────────────────────────────────────────────
+    exp_min, exp_max = 3, 7
+    exp_peak = 5
+    exp_m = _re.search(r"(\d+)\s*[-–to]+\s*(\d+)\s*years?", jd_text, _re.IGNORECASE)
+    if exp_m:
+        exp_min = int(exp_m.group(1))
+        exp_max = int(exp_m.group(2))
+        exp_peak = (exp_min + exp_max) / 2
+    else:
+        plus_m = _re.search(r"(\d+)\+\s*years?", jd_text, _re.IGNORECASE)
+        if plus_m:
+            exp_min = int(plus_m.group(1))
+            exp_max = exp_min + 4
+            exp_peak = float(exp_min)
+
+    # ── Extract Location ──────────────────────────────────────────────────────
+    loc_patterns = [
+        r"location[:\s]+([A-Za-z\s,/]+?)(?:\n|$|,\s*(?:India|Remote|Hybrid))",
+        r"based (?:in|at)[:\s]+([A-Za-z\s,/]+?)(?:\n|\.)",
+    ]
+    locations = []
+    for pat in loc_patterns:
+        m = _re.search(pat, jd_text[:3000], _re.IGNORECASE)
+        if m:
+            raw_loc = m.group(1).strip()
+            locations = [l.strip() for l in _re.split(r"[,/&]", raw_loc) if l.strip()][:3]
+            break
+    if not locations:
+        # Look for known Indian cities
+        known_cities = ["Mumbai", "Delhi", "Bengaluru", "Bangalore", "Hyderabad",
+                        "Chennai", "Pune", "Noida", "Gurgaon", "Gurugram",
+                        "Kolkata", "Ahmedabad", "Jaipur", "Remote"]
+        found = [c for c in known_cities if c.lower() in jd_text.lower()]
+        locations = found[:3] if found else ["Not specified"]
+
+    # ── Skill extraction using keyword matching ───────────────────────────────
+    TECH_SKILL_BUCKETS = {
+        "Machine Learning / AI": {
+            "keywords": ["machine learning", "deep learning", "neural network", "pytorch", "tensorflow",
+                         "scikit-learn", "xgboost", "gradient boosting", "reinforcement learning",
+                         "transformers", "bert", "gpt", "llm", "fine-tuning", "lora", "rlhf"],
+            "weight": 0,
+        },
+        "NLP & Information Retrieval": {
+            "keywords": ["nlp", "natural language processing", "information retrieval", "text mining",
+                         "sentiment analysis", "named entity recognition", "question answering",
+                         "semantic search", "bm25", "tfidf", "word2vec", "glove", "fasttext"],
+            "weight": 0,
+        },
+        "Vector & Embedding Systems": {
+            "keywords": ["embeddings", "vector search", "faiss", "pinecone", "weaviate", "milvus",
+                         "qdrant", "chromadb", "ann", "hnsw", "bi-encoder", "cross-encoder",
+                         "sentence-transformers", "dense retrieval", "sparse retrieval", "hybrid search"],
+            "weight": 0,
+        },
+        "Ranking & Recommendation": {
+            "keywords": ["ranking", "recommendation", "collaborative filtering", "learning to rank",
+                         "ltr", "ndcg", "mrr", "map", "recall", "precision", "re-ranking",
+                         "lambdamart", "listwise", "pairwise", "pointwise"],
+            "weight": 0,
+        },
+        "Python & Engineering": {
+            "keywords": ["python", "fastapi", "flask", "django", "rest api", "microservices",
+                         "docker", "kubernetes", "aws", "gcp", "azure", "ci/cd", "git",
+                         "sql", "postgresql", "redis", "kafka", "airflow"],
+            "weight": 0,
+        },
+        "Data Engineering & MLOps": {
+            "keywords": ["mlops", "mlflow", "kubeflow", "data pipeline", "etl", "feature store",
+                         "model serving", "inference", "latency optimization", "a/b testing",
+                         "monitoring", "databricks", "spark", "hadoop", "data warehouse"],
+            "weight": 0,
+        },
+        "Frontend / Full Stack": {
+            "keywords": ["react", "next.js", "typescript", "javascript", "html", "css",
+                         "node.js", "graphql", "rest", "ui/ux", "angular", "vue"],
+            "weight": 0,
+        },
+        "Cloud & DevOps": {
+            "keywords": ["aws", "gcp", "azure", "terraform", "ansible", "jenkins",
+                         "github actions", "kubernetes", "helm", "prometheus", "grafana"],
+            "weight": 0,
+        },
+    }
+
+    jd_lower = jd_text.lower()
+    total_hits = 0
+    matched_buckets = {}
+    for bucket, info in TECH_SKILL_BUCKETS.items():
+        matched = [kw for kw in info["keywords"] if kw in jd_lower]
+        if matched:
+            matched_buckets[bucket] = matched
+            total_hits += len(matched)
+
+    # Compute weights proportionally
+    hard_skills = []
+    for bucket, keywords in matched_buckets.items():
+        raw_weight = len(keywords) / max(total_hits, 1)
+        hard_skills.append({
+            "name": bucket,
+            "weight": round(raw_weight, 2),
+            "keywords": [kw.title() for kw in keywords[:8]],
+        })
+    # Sort by weight desc, cap at 6 buckets
+    hard_skills.sort(key=lambda x: -x["weight"])
+    hard_skills = hard_skills[:6]
+    # Normalize weights to sum to 1
+    wsum = sum(s["weight"] for s in hard_skills) or 1
+    for s in hard_skills:
+        s["weight"] = round(s["weight"] / wsum, 2)
+
+    if not hard_skills:
+        # Fallback to canonical
+        hard_skills = [
+            {"name": "Technical Skills", "weight": 1.0, "keywords": []},
+        ]
+
+    # ── Preferred Skills ──────────────────────────────────────────────────────
+    PREFERRED_PATTERNS = [
+        ("Open Source Contributions", ["github", "open source", "open-source", "kaggle", "arxiv"]),
+        ("Startup / Product Experience", ["startup", "product company", "series", "founding team"]),
+        ("Research / Publications", ["research", "paper", "publication", "conference", "journal"]),
+        ("Domain Expertise", ["domain", "industry", "sector", "vertical", "domain knowledge"]),
+        ("Leadership Experience", ["lead", "mentor", "manage", "team lead", "tech lead"]),
+        ("Communication Skills", ["communication", "presentation", "stakeholder", "collaboration"]),
+    ]
+    preferred = []
+    for skill_name, patterns in PREFERRED_PATTERNS:
+        if any(p in jd_lower for p in patterns):
+            preferred.append({"name": skill_name, "note": "Bonus — not required"})
+    if not preferred:
+        preferred = [{"name": "Relevant domain experience", "note": "Bonus"}]
+
+    # ── Detect disqualifiers mentioned ───────────────────────────────────────
+    from jd_parser import _build_disqualifier_rules
+    disqualifiers = _build_disqualifier_rules()
+
+    # ── Build location map ───────────────────────────────────────────────────
+    CITY_SCORES = {
+        "Pune": 1.00, "Noida": 1.00, "Delhi": 0.95, "NCR": 0.92,
+        "Bengaluru": 0.92, "Bangalore": 0.92, "Mumbai": 0.88,
+        "Chennai": 0.85, "Hyderabad": 0.85, "Kolkata": 0.78,
+        "Ahmedabad": 0.75, "Jaipur": 0.70, "Remote": 0.80,
+        "Not specified": 0.70,
+    }
+    loc_map = []
+    primary_score = 1.0
+    for i, loc in enumerate(locations):
+        score = CITY_SCORES.get(loc, 0.80)
+        loc_map.append({"bucket": loc, "score": score, "bar": int(score * 100), "is_primary": True})
+        primary_score = score if i == 0 else primary_score
+    # Add standard comparison buckets
+    std_buckets = [
+        ("Same City", primary_score),
+        ("Adjacent City", round(primary_score * 0.92, 2)),
+        ("Same State", round(primary_score * 0.85, 2)),
+        ("Different State", round(primary_score * 0.70, 2)),
+        ("Remote (willing)", round(primary_score * 0.65, 2)),
+        ("Abroad (willing)", round(primary_score * 0.40, 2)),
+        ("Abroad (no relocate)", round(primary_score * 0.15, 2)),
+    ]
+    loc_map = [{"bucket": b, "score": s, "bar": int(s * 100), "is_primary": False} for b, s in std_buckets]
+
+    # ── Build AI Queries from JD text ─────────────────────────────────────────
+    top_skills_text = ", ".join([s["name"] for s in hard_skills[:3]])
+    ai_queries = [
+        {
+            "weight": "60%",
+            "label": "Core Technical Fit",
+            "text": f"Senior engineer with expertise in {top_skills_text}. Strong hands-on background in production systems.",
+        },
+        {
+            "weight": "30%",
+            "label": "Production Mindset",
+            "text": "Shipped to production at scale. Real users, real latency requirements. Startup or product-company background. End-to-end ownership.",
+        },
+        {
+            "weight": "10%",
+            "label": "Domain Context",
+            "text": f"Experience relevant to the role at {', '.join(locations[:2])}. Domain fit and cultural alignment.",
+        },
+    ]
+
+    # ── Build Title Tiers ──────────────────────────────────────────────────────
+    from config import TITLE_SCORE_MAP, CORE_ML_AI_TITLES, ADJACENT_HIGH_TITLES
+    title_tiers = [
+        {"tier": "Core Match", "score": "1.00", "examples": ", ".join(CORE_ML_AI_TITLES[:5]),
+         "color": "text-emerald-600 dark:text-emerald-400", "bg": "bg-emerald-500"},
+        {"tier": "Adjacent Tech", "score": str(TITLE_SCORE_MAP.get("adjacent_high", 0.70)),
+         "examples": ", ".join(ADJACENT_HIGH_TITLES[:4]),
+         "color": "text-blue-600 dark:text-blue-400", "bg": "bg-blue-500"},
+        {"tier": "General Tech", "score": "0.35", "examples": "Full Stack, Cloud, DevOps, Mobile, QA",
+         "color": "text-amber-600 dark:text-amber-400", "bg": "bg-amber-500"},
+        {"tier": "Low Signal", "score": "0.10", "examples": "Java/.NET developer, Web developer",
+         "color": "text-orange-600 dark:text-orange-400", "bg": "bg-orange-400"},
+        {"tier": "Non-Tech", "score": "0.02", "examples": "Business Analyst, HR Manager, Sales Executive",
+         "color": "text-red-600 dark:text-red-400", "bg": "bg-red-500"},
+    ]
+
+    # ── JD Highlight excerpt ──────────────────────────────────────────────────
+    # Extract a ~300 char excerpt from the JD text near requirements
+    excerpt = ""
+    for marker in ["requirements", "responsibilities", "qualifications", "you will", "must have"]:
+        idx = jd_lower.find(marker)
+        if idx >= 0:
+            excerpt = jd_text[idx: idx + 400].strip()
+            break
+    if not excerpt:
+        excerpt = jd_text[:400].strip()
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "role_title": role_title,
+        "locations": locations,
+        "experience": {
+            "min_years": exp_min,
+            "max_years": exp_max,
+            "peak_years": exp_peak,
+        },
+        "hard_skills": hard_skills,
+        "preferred_skills": preferred,
+        "disqualifiers": [
+            {
+                "name": d["name"],
+                "logic": d["description"],
+                "color": "text-amber-600 dark:text-amber-400",
+                "bg": "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/50",
+            }
+            for d in disqualifiers
+        ],
+        "location_map": loc_map,
+        "ai_queries": ai_queries,
+        "title_tiers": title_tiers,
+        "jd_excerpt": excerpt,
+        "jd_text_length": len(jd_text),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # POST /api/upload
 # ─────────────────────────────────────────────────────────────────────────────
 @app.post("/api/upload")
@@ -239,6 +558,7 @@ class RankRequest(BaseModel):
     candidates: Optional[list[dict]] = None
     weights: Optional[dict] = None
     llm_enabled: bool = False
+    jd_data: Optional[dict] = None
 
 
 @app.post("/api/rank")
@@ -251,6 +571,34 @@ async def rank_candidates(request: Request, body: RankRequest):
 
     if not candidates:
         raise HTTPException(400, "No candidates loaded. Upload candidates first.")
+
+    # ── Dynamic Config Override ──
+    if body.jd_data:
+        # Override AI Queries
+        if "ai_queries" in body.jd_data:
+            import embedding_engine
+            embedding_engine.JD_QUERIES = body.jd_data["ai_queries"]
+            embedding_engine._jd_embeddings = None
+        
+        # Override CE Query
+        import cross_encoder_reranker
+        skills_str = ", ".join(s["name"] for s in body.jd_data.get("hard_skills", [])[:5])
+        cross_encoder_reranker.CE_QUERY = f"{body.jd_data.get('role_title', 'Role')} requiring: {skills_str}. " \
+                          f"Experience: {body.jd_data.get('experience', {}).get('min_years', 3)}+ years."
+        
+        # Override Skills
+        import skill_scorer
+        if "hard_skills" in body.jd_data:
+            skill_scorer.JD_SKILL_CATEGORIES = {s["name"]: s for s in body.jd_data["hard_skills"]}
+        if "preferred_skills" in body.jd_data:
+            skill_scorer.PREFERRED_SKILLS = [s["name"].lower() for s in body.jd_data["preferred_skills"]]
+            
+        # Override Experience
+        import experience_scorer
+        exp = body.jd_data.get("experience", {})
+        if "min_years" in exp: experience_scorer.JD_EXP_MIN = exp["min_years"]
+        if "max_years" in exp: experience_scorer.JD_EXP_MAX = exp["max_years"]
+        if "peak_years" in exp: experience_scorer.EXPERIENCE_PEAK = exp["peak_years"]
 
     async def event_stream():
         _state["status"] = "ranking"
