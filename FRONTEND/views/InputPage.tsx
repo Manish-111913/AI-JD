@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Brain,
   CheckCircle2,
   ChevronRight,
-  Database,
   Info,
   Play,
   Upload,
@@ -187,50 +186,6 @@ export default function InputPage() {
     [dispatch]
   );
 
-  const loadSample = useCallback(async () => {
-    setUploadStatus("uploading");
-    dispatch({ type: "SET_STATUS", payload: "loading" });
-
-    try {
-      // Try to hit the backend status first to check if it's running
-      const statusRes = await fetch(`${API_BASE}/api/status`).catch(() => null);
-
-      if (statusRes?.ok) {
-        // Check if backend already has candidates loaded
-        const status = await statusRes.json();
-        if (status.candidates_loaded > 0) {
-          dispatch({
-            type: "SET_UPLOADED_COUNT",
-            payload: {
-              count: status.candidates_loaded,
-              preview: [],
-            },
-          });
-          dispatch({ type: "SET_STATUS", payload: "idle" });
-          setUploadStatus("success");
-          setValidation({
-            status: "success",
-            message: `${status.candidates_loaded} candidates loaded from backend.`,
-            detail: "Using candidates already uploaded to the backend.",
-            count: status.candidates_loaded,
-          });
-          setDetectedFormat(".json");
-          return;
-        }
-      }
-
-      throw new Error("No candidates on backend. Please upload a real candidate file instead of using sample data.");
-    } catch (err: unknown) {
-      dispatch({ type: "SET_STATUS", payload: "idle" });
-      setUploadStatus("error");
-      setValidation({
-        status: "error",
-        message: "Failed to load sample data.",
-        detail: err instanceof Error ? err.message : "Error connecting to backend.",
-      });
-    }
-  }, [dispatch]);
-
   const handleFileDrop = useCallback(
     (files: FileList) => {
       const file = files[0];
@@ -301,45 +256,13 @@ export default function InputPage() {
               Load Candidates
             </h1>
             <p className="text-[14px] leading-relaxed text-muted-foreground">
-              Upload candidate profiles (.json, .jsonl, .jsonl.gz) or use the
-              official hackathon sample. Files are sent to the real ranking backend.
+              Upload candidate profiles (.json, .jsonl, .jsonl.gz). Files are sent to the real ranking backend.
             </p>
           </div>
 
-          {/* Load Official Sample */}
-          <section className="rounded-2xl border border-border bg-card p-4 shadow-xs">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                <Database className="h-4 w-4 text-foreground" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[14px] font-semibold text-foreground">
-                  Official Hackathon Sample
-                </p>
-                <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
-                  50 candidates spanning all title types — deterministic and
-                  reproducible results.
-                </p>
-              </div>
-            </div>
-
-            <Button
-              className="mt-4 h-11 w-full gap-2 rounded-lg bg-foreground text-background hover:bg-foreground/90"
-              onClick={loadSample}
-              disabled={uploadStatus === "uploading"}
-            >
-              {uploadStatus === "uploading" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Database className="h-4 w-4" />
-              )}
-              Load Official Sample (50 Candidates)
-            </Button>
-          </section>
-
           <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
             <div className="h-px flex-1 bg-border" />
-            <span>or upload your own</span>
+            <span>upload candidates</span>
             <div className="h-px flex-1 bg-border" />
           </div>
 

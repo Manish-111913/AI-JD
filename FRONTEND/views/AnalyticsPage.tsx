@@ -249,7 +249,7 @@ export default function AnalyticsPage() {
           </table>
         </div>
         <p className="text-[11px] text-muted-foreground mt-2">
-          Even if N=0 for most disqualifiers in the demo sample, this table proves the rules are implemented. Architecture evidence matters.
+          This table shows how the disqualifier rules are applied. Architecture evidence matters.
         </p>
       </section>
 

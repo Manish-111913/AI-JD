@@ -9,8 +9,8 @@ export function validateSubmission(candidates: RankedCandidate[]): ValidationRes
   const checks = [
     {
       name: "Row count = 100",
-      passed: candidates.length === 100 || candidates.length === 50,
-      message: candidates.length === 50 ? "50 rows (demo sample)" : candidates.length !== 100 ? `Got ${candidates.length}` : "",
+      passed: candidates.length === 100,
+      message: candidates.length !== 100 ? `Got ${candidates.length}` : "",
     },
     {
       name: "Ranks 1–N each exactly once",

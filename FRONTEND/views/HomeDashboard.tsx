@@ -81,7 +81,7 @@ export default function HomeDashboard() {
             className="gap-1.5 bg-foreground text-background hover:bg-foreground/90"
             onClick={() => router.push("/input")}
           >
-            Run Ranking on Sample
+            Run Ranking
             <ArrowRight className="w-3.5 h-3.5" />
           </Button>
           <Button
