@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
 import { RankedCandidate } from '../data/mockData';
+import type { CandidatePreviewItem } from "@/types/candidateUpload";
 
 export type AppStatus = 'idle' | 'loading' | 'ranking' | 'done' | 'error';
 export type ExecutionMode = 'competition' | 'demo';
@@ -124,7 +125,7 @@ export interface AppState {
   // Real backend results
   backendResults: BackendResult[];
   uploadedCount: number;
-  uploadedPreview: Array<{ candidate_id: string; current_title: string; current_company: string; location: string; years_of_experience: number }>;
+  uploadedPreview: CandidatePreviewItem[];
   selectedCandidate: RankedCandidate | null;
   selectedBackendCandidate: BackendResult | null;
   activeFilters: FilterState;
@@ -144,7 +145,7 @@ type Action =
   | { type: 'LOAD_DATA'; payload: RankedCandidate[] }
   | { type: 'SET_RESULTS'; payload: RankedCandidate[] }
   | { type: 'SET_BACKEND_RESULTS'; payload: BackendResult[] }
-  | { type: 'SET_UPLOADED_COUNT'; payload: { count: number; preview: AppState['uploadedPreview'] } }
+  | { type: 'SET_UPLOADED_COUNT'; payload: { count: number; preview: CandidatePreviewItem[] } }
   | { type: 'SELECT_CANDIDATE'; payload: RankedCandidate | null }
   | { type: 'SELECT_BACKEND_CANDIDATE'; payload: BackendResult | null }
   | { type: 'UPDATE_FILTERS'; payload: Partial<FilterState> }

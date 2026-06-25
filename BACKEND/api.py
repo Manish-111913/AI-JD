@@ -542,10 +542,15 @@ async def upload_candidates(file: UploadFile = File(...)):
     preview = [
         {
             "candidate_id": c["candidate_id"],
+            "anonymized_name": c["anonymized_name"],
+            "headline": c["headline"],
             "current_title": c["current_title"],
             "current_company": c["current_company"],
+            "current_company_size": c["current_company_size"],
+            "current_industry": c["current_industry"],
             "location": c["location"],
             "years_of_experience": c["years_of_experience"],
+            "top_skills": [s["name"] for s in c.get("skills", [])[:4]],
         }
         for c in candidates[:3]
     ]

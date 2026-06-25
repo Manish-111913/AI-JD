@@ -18,6 +18,7 @@ import {
 import { useAppContext } from "@/store/appStore";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
+import type { CandidatePreviewItem } from "@/types/candidateUpload";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -28,13 +29,7 @@ interface ValidationResult {
   message: string;
   detail?: string;
   count?: number;
-  preview?: Array<{
-    candidate_id: string;
-    current_title: string;
-    current_company: string;
-    location: string;
-    years_of_experience: number;
-  }>;
+  preview?: CandidatePreviewItem[];
 }
 
 const MODE_OPTIONS = [
@@ -118,6 +113,12 @@ export default function InputPage() {
     async (file: File) => {
       setUploadStatus("uploading");
       setSelectedFile(file);
+      setValidation(null);
+      setDetectedFormat(null);
+      dispatch({
+        type: "SET_UPLOADED_COUNT",
+        payload: { count: 0, preview: [] },
+      });
 
       const name = file.name.toLowerCase();
       let format = "";
@@ -307,7 +308,7 @@ export default function InputPage() {
                   <p className="mt-1 text-[12px] text-emerald-600 dark:text-emerald-400">Uploaded successfully</p>
                   <button
                     className="mt-3 text-[11px] text-muted-foreground underline hover:text-foreground"
-                    onClick={(e) => { e.stopPropagation(); setSelectedFile(null); setValidation(null); setUploadStatus("idle"); }}
+                    onClick={(e) => { e.stopPropagation(); setSelectedFile(null); setValidation(null); setDetectedFormat(null); setUploadStatus("idle"); dispatch({ type: "SET_UPLOADED_COUNT", payload: { count: 0, preview: [] } }); }}
                   >
                     Upload different file
                   </button>
@@ -358,7 +359,7 @@ export default function InputPage() {
           </AnimatePresence>
 
           {/* Candidate Preview */}
-          {previewItems.length > 0 && (
+          {uploadStatus === "success" && previewItems.length > 0 && (
             <section className="space-y-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 Candidate Preview
@@ -369,14 +370,44 @@ export default function InputPage() {
                     className="min-h-[112px] rounded-xl border border-border bg-card p-3"
                     key={c.candidate_id}
                   >
-                    <div className="font-mono text-[10px] tracking-widest text-muted-foreground">
-                      {c.candidate_id.replace("_", " ")}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-mono text-[10px] tracking-widest text-muted-foreground">
+                          {c.candidate_id.replace("_", " ")}
+                        </div>
+                        <p className="mt-1 text-[11px] font-medium text-muted-foreground">
+                          {c.anonymized_name}
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                        {c.current_company_size}
+                      </span>
                     </div>
                     <h3 className="mt-2 line-clamp-2 text-[13px] font-semibold leading-5 text-foreground">
                       {c.current_title}
                     </h3>
+                    <p className="mt-1 line-clamp-1 text-[12px] text-muted-foreground">
+                      {c.current_company} · {c.current_industry}
+                    </p>
                     <p className="mt-1 text-[12px] text-muted-foreground">{c.location}</p>
                     <p className="mt-3 text-[12px] text-foreground">{c.years_of_experience}y exp</p>
+                    {c.headline && (
+                      <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+                        {c.headline}
+                      </p>
+                    )}
+                    {c.top_skills?.length ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {c.top_skills.slice(0, 3).map((skill) => (
+                          <span
+                            className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground"
+                            key={skill}
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>
