@@ -267,70 +267,78 @@ export default function InputPage() {
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          {/* Drop zone */}
-          <div
-            className={[
-              "rounded-2xl border border-dashed px-6 py-8 text-center transition-colors cursor-pointer",
-              isDragging
-                ? "border-foreground/45 bg-muted/70"
-                : selectedFile && uploadStatus === "success"
-                ? "border-emerald-300 bg-emerald-50/40 dark:border-emerald-800 dark:bg-emerald-950/20"
-                : "border-border bg-background hover:border-foreground/25",
-            ].join(" ")}
-            onClick={() => uploadStatus !== "uploading" && fileInputRef.current?.click()}
-            onDragLeave={() => setIsDragging(false)}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            role="button"
-            tabIndex={0}
-          >
-            <input
-              ref={fileInputRef}
-              accept=".json,.jsonl,.gz"
-              className="hidden"
-              onChange={handleFileChange}
-              type="file"
-            />
-
-            <AnimatePresence mode="wait">
-              {uploadStatus === "uploading" ? (
-                <motion.div key="uploading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                  <Loader2 className="mx-auto h-9 w-9 text-muted-foreground animate-spin" />
-                  <p className="mt-3 text-[13px] font-medium text-foreground">Uploading to backend…</p>
-                  <p className="mt-1 text-[12px] text-muted-foreground">{selectedFile?.name}</p>
-                </motion.div>
-              ) : selectedFile && uploadStatus === "success" ? (
-                <motion.div key="done" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
-                  <div className="mx-auto h-10 w-10 rounded-full bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center">
-                    <CheckCircle2 className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
-                  </div>
-                  <p className="mt-3 text-[13px] font-medium text-foreground">{selectedFile.name}</p>
+          {uploadStatus === "success" ? (
+            <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/20">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950/50">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-foreground">{selectedFile?.name}</p>
                   <p className="mt-1 text-[12px] text-emerald-600 dark:text-emerald-400">Uploaded successfully</p>
-                  <button
-                    className="mt-3 text-[11px] text-muted-foreground underline hover:text-foreground"
-                    onClick={(e) => { e.stopPropagation(); setSelectedFile(null); setValidation(null); setDetectedFormat(null); setUploadStatus("idle"); dispatch({ type: "SET_UPLOADED_COUNT", payload: { count: 0, preview: [] } }); }}
-                  >
-                    Upload different file
-                  </button>
-                </motion.div>
-              ) : (
-                <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <Upload className="mx-auto h-9 w-9 text-muted-foreground" />
-                  <p className="mt-3 text-[13px] font-medium text-foreground">
-                    Drop file here or click to browse
+                  <p className="mt-1 text-[12px] text-muted-foreground">
+                    Upload complete. Preview, execution mode, and run controls are now available below.
                   </p>
-                  <p className="mt-2 text-[12px] leading-5 text-muted-foreground">
-                    Accepts .json (array), .jsonl (newline-delimited), .jsonl.gz (gzip-compressed)
-                  </p>
-                  {detectedFormat && (
-                    <div className="mt-3 inline-flex rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-                      Detected: {detectedFormat}
-                    </div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+                </div>
+              </div>
+              <button
+                className="mt-3 text-[11px] text-muted-foreground underline hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedFile(null);
+                  setValidation(null);
+                  setDetectedFormat(null);
+                  setUploadStatus("idle");
+                  dispatch({ type: "SET_UPLOADED_COUNT", payload: { count: 0, preview: [] } });
+                }}
+              >
+                Upload different file
+              </button>
+            </section>
+          ) : (
+            <div
+              className="rounded-2xl border border-dashed px-6 py-8 text-center transition-colors cursor-pointer border-border bg-background hover:border-foreground/25"
+              onClick={() => uploadStatus !== "uploading" && fileInputRef.current?.click()}
+              onDragLeave={() => setIsDragging(false)}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              role="button"
+              tabIndex={0}
+            >
+              <input
+                ref={fileInputRef}
+                accept=".json,.jsonl,.gz"
+                className="hidden"
+                onChange={handleFileChange}
+                type="file"
+              />
+
+              <AnimatePresence mode="wait">
+                {uploadStatus === "uploading" ? (
+                  <motion.div key="uploading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <Loader2 className="mx-auto h-9 w-9 animate-spin text-muted-foreground" />
+                    <p className="mt-3 text-[13px] font-medium text-foreground">Uploading to backend…</p>
+                    <p className="mt-1 text-[12px] text-muted-foreground">{selectedFile?.name}</p>
+                  </motion.div>
+                ) : (
+                  <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <Upload className="mx-auto h-9 w-9 text-muted-foreground" />
+                    <p className="mt-3 text-[13px] font-medium text-foreground">
+                      Drop file here or click to browse
+                    </p>
+                    <p className="mt-2 text-[12px] leading-5 text-muted-foreground">
+                      Accepts .json (array), .jsonl (newline-delimited), .jsonl.gz (gzip-compressed)
+                    </p>
+                    {detectedFormat && (
+                      <div className="mt-3 inline-flex rounded-full border border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
+                        Detected: {detectedFormat}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
 
           {/* Validation result */}
           <AnimatePresence>
@@ -417,52 +425,55 @@ export default function InputPage() {
             </section>
           )}
 
-          {/* Execution Mode */}
-          <section className="space-y-3">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Select Execution Mode
-            </div>
+          {uploadStatus === "success" && (
+            <>
+              <section className="space-y-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Select Execution Mode
+                </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              {MODE_OPTIONS.map((option) => (
-                <ModeCard
-                  active={state.executionMode === option.mode}
-                  description={option.description}
-                  icon={option.icon}
-                  key={option.mode}
-                  label={option.label}
-                  onClick={() =>
-                    dispatch({
-                      type: "SET_EXECUTION_MODE",
-                      payload: option.mode,
-                    })
-                  }
-                  tone={option.mode === "demo" ? "ai" : "default"}
-                />
-              ))}
-            </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {MODE_OPTIONS.map((option) => (
+                    <ModeCard
+                      active={state.executionMode === option.mode}
+                      description={option.description}
+                      icon={option.icon}
+                      key={option.mode}
+                      label={option.label}
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_EXECUTION_MODE",
+                          payload: option.mode,
+                        })
+                      }
+                      tone={option.mode === "demo" ? "ai" : "default"}
+                    />
+                  ))}
+                </div>
 
-            <div className="rounded-xl border border-border bg-muted/35 px-4 py-3">
-              <div className="flex items-start gap-2">
-                <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <p className="text-[12px] leading-5 text-muted-foreground">
-                  <span className="font-semibold text-foreground">Default: Competition Mode</span>{" "}
-                  — safe for reproduction. Demo mode requires any optional demo AI features to be
-                  configured separately.
-                </p>
-              </div>
-            </div>
-          </section>
+                <div className="rounded-xl border border-border bg-muted/35 px-4 py-3">
+                  <div className="flex items-start gap-2">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <p className="text-[12px] leading-5 text-muted-foreground">
+                      <span className="font-semibold text-foreground">Default: Competition Mode</span>{" "}
+                      — safe for reproduction. Demo mode requires any optional demo AI features to be
+                      configured separately.
+                    </p>
+                  </div>
+                </div>
+              </section>
 
-          <Button
-            className="h-11 w-full justify-start rounded-lg bg-foreground px-4 text-background hover:bg-foreground/90"
-            disabled={loadedCount === 0}
-            onClick={runRanking}
-          >
-            <Play className="h-4 w-4 fill-current" />
-            <span>{runLabel}</span>
-            <ChevronRight className="ml-auto h-4 w-4" />
-          </Button>
+              <Button
+                className="h-11 w-full justify-start rounded-lg bg-foreground px-4 text-background hover:bg-foreground/90"
+                disabled={loadedCount === 0}
+                onClick={runRanking}
+              >
+                <Play className="h-4 w-4 fill-current" />
+                <span>{runLabel}</span>
+                <ChevronRight className="ml-auto h-4 w-4" />
+              </Button>
+            </>
+          )}
         </div>
       </main>
     </div>
