@@ -1006,6 +1006,19 @@ async def rank_candidates(request: Request, body: RankRequest):
                     f"Final = {1.0 - CE_WEIGHT:.2f} × {feat.get('first_pass_score', 0.0):.3f} "
                     f"+ {CE_WEIGHT:.2f} × {feat.get('ce_score', 0.0):.3f} = {blended:.3f}"
                 ),
+                # ── Promote key scoring fields to top level for frontend compatibility ──
+                "ce_score": round(feat.get("ce_score", 0.0) * 100, 2),  # 0–100 scale
+                "skill_score": round(feat.get("skill_score", feat.get("first_pass_score", 0.0)), 4),
+                "career_score": round(feat.get("career_score", 0.0), 4),
+                "experience_score": round(feat.get("experience_score", 0.0), 4),
+                "location_score": round(feat.get("location_score", 0.0), 4),
+                "education_score": round(feat.get("education_score", 0.0), 4),
+                "behavioral_multiplier": round(feat.get("behavioral_multiplier", 1.0), 4),
+                "disqualifier_penalty": round(feat.get("disqualifier_penalty", 1.0), 4),
+                "platform_quality_score": round(feat.get("platform_quality_score", 0.0), 4),
+                "honeypot_confidence": round(feat.get("honeypot_confidence", 0.0), 4),
+                "honeypot_flags": feat.get("honeypot_flags", []),
+                "ce_reasoning": feat.get("ce_reasoning", ""),
             }
             results.append(result_entry)
 

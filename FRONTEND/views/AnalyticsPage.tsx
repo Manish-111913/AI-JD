@@ -6,9 +6,17 @@ import {
   ScatterChart, Scatter, ReferenceLine, PieChart, Pie,
   CartesianGrid, Legend, LabelList
 } from "recharts";
-import { useAppContext } from "@/store/appStore";
-import { RankedCandidate } from "@/data/mockData";
+import { useAppContext, BackendResult } from "@/store/appStore";
 import { BarChart3, Cpu, AlertTriangle } from "lucide-react";
+
+// Helper to safely get a value from top-level or features dict
+function getField(c: BackendResult, key: string, fallback: number = 0): number {
+  const topLevel = (c as any)[key];
+  if (topLevel !== undefined && topLevel !== null) return Number(topLevel);
+  const fromFeatures = (c.features as any)?.[key];
+  if (fromFeatures !== undefined && fromFeatures !== null) return Number(fromFeatures);
+  return fallback;
+}
 
 const DISQUALIFIERS = [
   { name: "All-consulting career", key: "consulting" },
@@ -42,7 +50,7 @@ function TooltipBox({ active, payload, label }: any) {
 
 export default function AnalyticsPage() {
   const { state } = useAppContext();
-  const results: RankedCandidate[] = (state.backendResults || []) as unknown as RankedCandidate[];
+  const results: BackendResult[] = (state.backendResults || []);
 
   if (results.length === 0) {
     return (
@@ -61,7 +69,8 @@ export default function AnalyticsPage() {
   const scoreHist = useMemo(() => {
     const buckets = Array.from({ length: 10 }, (_, i) => ({ range: `${(i * 0.1).toFixed(1)}–${((i + 1) * 0.1).toFixed(1)}`, count: 0 }));
     results.forEach(c => {
-      const i = Math.min(9, Math.floor(c.final_score * 10));
+      const score = c.final_score ?? 0;
+      const i = Math.min(9, Math.floor(score * 10));
       buckets[i].count++;
     });
     return buckets;
@@ -70,8 +79,16 @@ export default function AnalyticsPage() {
   const top10 = results.slice(0, 10);
 
   const availData = useMemo(() => {
-    const high = results.filter(c => c.redrob_signals.open_to_work_flag && c.behavioral_multiplier > 0.8).length;
-    const mid = results.filter(c => c.redrob_signals.open_to_work_flag && c.behavioral_multiplier <= 0.8).length;
+    const high = results.filter(c => {
+      const openToWork = c.redrob_signals?.open_to_work_flag ?? false;
+      const bMult = getField(c, "behavioral_multiplier", 0.5);
+      return openToWork && bMult > 0.8;
+    }).length;
+    const mid = results.filter(c => {
+      const openToWork = c.redrob_signals?.open_to_work_flag ?? false;
+      const bMult = getField(c, "behavioral_multiplier", 0.5);
+      return openToWork && bMult <= 0.8;
+    }).length;
     const low = results.length - high - mid;
     return [
       { name: "Highly Available", value: high, fill: "hsl(142 72% 29%)" },
@@ -91,9 +108,9 @@ export default function AnalyticsPage() {
   const disqualData = DISQUALIFIERS.map(d => ({
     ...d,
     count: d.key === "honeypot"
-      ? results.filter(c => c.honeypot_confidence > 0.55).length
-      : results.filter(c => c.disqualifier_penalty < 0.85).length > 0
-        ? Math.floor(results.filter(c => c.disqualifier_penalty < 0.85).length / DISQUALIFIERS.length)
+      ? results.filter(c => getField(c, "honeypot_confidence", 0) > 0.55).length
+      : results.filter(c => getField(c, "disqualifier_penalty", 1) < 0.85).length > 0
+        ? Math.floor(results.filter(c => getField(c, "disqualifier_penalty", 1) < 0.85).length / DISQUALIFIERS.length)
         : 0,
     avgMult: d.key === "honeypot" ? 0 : 0.72,
   }));
@@ -198,12 +215,12 @@ export default function AnalyticsPage() {
                 <div className="text-[12px] font-semibold text-foreground truncate">{c.current_title}</div>
                 <div className="text-[11px] text-muted-foreground truncate">{c.current_company}</div>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className="font-mono text-[11px] font-bold text-foreground">{c.final_score.toFixed(3)}</span>
-                  <span className="ai-badge text-[10px] font-mono px-1.5 py-0.5 rounded-[3px]">CE {Math.round(c.ce_score)}</span>
+                  <span className="font-mono text-[11px] font-bold text-foreground">{(c.final_score ?? 0).toFixed(3)}</span>
+                  <span className="ai-badge text-[10px] font-mono px-1.5 py-0.5 rounded-[3px]">CE {Math.round(getField(c, "ce_score", 0))}</span>
                   <span className="text-[10px] text-muted-foreground">{c.location}</span>
                 </div>
               </div>
-              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${c.redrob_signals.open_to_work_flag ? "bg-emerald-500" : "bg-amber-400"}`} />
+              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${c.redrob_signals?.open_to_work_flag ? "bg-emerald-500" : "bg-amber-400"}`} />
             </div>
           ))}
         </div>
