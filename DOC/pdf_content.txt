@@ -1,0 +1,158 @@
+﻿=== PAGE 1 ===
+REDROB HACKATHON
+Pipeline Flow ΓÇö Updated Section
+Backend Logic Bible ΓÇö Section 2 Replacement
+=== PAGE 2 ===
+Section 2 ΓÇö Complete Pipeline Flow with Candidate Counts
+This section replaces the previous pipeline table. The key architectural decision is the three-stage
+funnel: title filter eliminates most irrelevant candidates first, bi-encoder narrows to a precise shortlist,
+cross-encoder makes the final quality judgment. Each stage has a different speed/accuracy tradeoff.
+2.1 The Three-Stage Funnel (Full 100K Dataset)
+100,000 Candidates
+(Full candidates.jsonl ΓÇö the competition dataset)
+Γåô
+STAGE 1 ΓÇö Title Pre-Filter
+Lookup table. No embedding. Runs in ~2 seconds.
+Γåô ~31,000 pass 69,000 eliminated (Business Analysts, HR, Accountants, Civil/Mech Eng, etc.)
+STAGE 2 ΓÇö Bi-Encoder + Composite Scoring
+Semantic similarity + 6 feature components. Vectorized numpy. ~15 seconds.
+Γåô Top 300 Sorted by composite score. Only these 300 go to cross-encoder.
+STAGE 3 ΓÇö Cross-Encoder Re-Ranking
+Local ms-marco-MiniLM-L-6-v2. Batch size 32. ~15ΓÇô30 seconds.
+Γåô Top 100 Blended score: 40% algorithmic + 60% cross-encoder.
+Final Submission ΓÇö Top 100 Ranked Candidates
+CRITICAL RULE: Cross-encoder NEVER runs on all candidates. It only ever sees the shortlisted
+top-300. This is intentional ΓÇö cross-encoder takes ~100ms per pair. On 100K that would take 2.8
+hours. On 300 it takes 30 seconds. The bi-encoder's job is to narrow the field fast so the cross-
+encoder can do deep, accurate judgment on a small set.
+2.2 Each Stage ΓÇö What It Does and Why
+Output Time
+Stage Name Input Count How It Works
+Count on CPU
+1 Title Pre-Filter 100,000 ~31,000 Lookup table maps each current_title to a ~2
+relevance score 0ΓÇô1. Titles like 'Business seconds
+Analyst' ΓåÆ 0.02 (eliminated). Titles like 'ML
+Engineer' ΓåÆ 1.0 (kept). No embedding, no
+model ΓÇö just a dictionary lookup.
+2A Bi-Encoder ~31,000 scored list Pre-computed embeddings loaded from .npy ~5
+Semantic file. Three JD query vectors ├ù all candidate seconds
+vectors via vectorized cosine similarity. Fast
+numpy matrix multiplication ΓÇö no model
+inference at this step.
+2B Feature Scoring ~31,000 scored list 6 components: skill trust, career quality, ~10
+experience curve, location, education, seconds
+behavioral multiplier. Composite score per
+candidate. Combined with semantic score from
+2A.
+=== PAGE 3 ===
+Output Time
+Stage Name Input Count How It Works
+Count on CPU
+2C Sort and Shortlist ~31,000 Top 300 Sort all ~31,000 scored candidates descending. ~1
+Take top 300. These are the candidates cross- second
+encoder will evaluate.
+3 Cross-Encoder 300 Top 100 Build (JD query text, candidate summary text) ~15ΓÇô30
+pair per candidate. Run cross-encoder in seconds
+batches of 32. Blend CE score with composite
+score. Sort by blended score. Take top 100.
+STAGES 2A + 2B + 2C are all ONE phase in the code: They run sequentially on the same
+~31,000 candidates and together they are called the 'First-Pass Composite Scorer'. The
+breakdown above shows how they work internally. From outside the system it looks like: Title
+Filter ΓåÆ Score Everything ΓåÆ Shortlist 300 ΓåÆ Cross-Encoder.
+2.3 How the Flow Scales for Different Input Sizes
+The architecture automatically adapts based on how many candidates you load. The cross-encoder
+shortlist cap adjusts dynamically:
+Bi-Encoder Cross-Encoder
+Input Size After Title Filter Final Output Total Runtime
+Shortlist Input
+100,000 ~31,000 Top 300 300 pairs Top 100 ~88 seconds
+(competition)
+10,000 ~3,100 Top 300 300 pairs Top 100 ~45 seconds
+1,000 ~310 Top 150 150 pairs Top 100 ~20 seconds
+100 (demo Skip title filter ΓÇö Top 80 80 pairs Top 50 ~8 seconds
+sample) all 100 pass
+50 (official Skip title filter ΓÇö All 50 50 pairs Top 20ΓÇô50 ~5 seconds
+hackathon all 50 pass
+sample)
+SKIP TITLE FILTER for small inputs: If input has fewer than 500 candidates, skip the title filter
+entirely. Pass all candidates directly to bi-encoder scoring. This is because with 50 candidates
+you want to rank all of them ΓÇö eliminating any would reduce the output below 100. The title filter
+is a performance optimization for large datasets, not a quality gate.
+2.4 Cross-Encoder Shortlist Cap Logic
+The shortlist size sent to the cross-encoder is not always 300. It adapts:
+Condition Shortlist Size Sent to CE Reason
+Input > 1,000 candidates 300 (hard cap) Large dataset ΓÇö only top-300 from
+composite scoring go to CE. Budget:
+~30s.
+=== PAGE 4 ===
+Condition Shortlist Size Sent to CE Reason
+Input 200ΓÇô1,000 candidates min(300, input ├ù 0.30) ΓÇö e.g. Medium dataset ΓÇö 30% of input up to
+500 candidates ΓåÆ 150 300 max.
+Input 50ΓÇô200 candidates All candidates Small dataset ΓÇö run CE on everything.
+200 pairs takes ~20 seconds.
+Input < 50 candidates All candidates Very small ΓÇö CE on all. Negligible time.
+2.5 Why Not Run Cross-Encoder on All 100K
+Time for
+Approach Feasible? Why We Don't Do This
+100K
+Cross-encoder on all 100K ~2.8 hours NO Way over the 5-minute constraint
+Cross-encoder on all ~31K ~52 minutes NO Still way over budget
+(post title filter)
+Cross-encoder on top 1,000 ~100 BORDERLINE Cuts too close to 5-minute limit. Leaves no
+seconds budget for other stages.
+Cross-encoder on top 300 ~30 seconds YES Leaves ~60 seconds for all other stages.
+(our approach) Comfortable within 5-minute budget.
+Cross-encoder on top 100 ~10 seconds YES but risky Too small ΓÇö good candidates at ranks
+only 101ΓÇô200 from the algorithm are missed.
+WHY 300 IS THE RIGHT NUMBER: 300 is the sweet spot between coverage and speed. The
+~745 genuine ML/AI candidates in the 100K dataset will almost all appear in the top-300 after
+composite scoring. Going higher (500+) wastes CE budget on marginal candidates. Going lower
+(100) risks missing good candidates the algorithm slightly underrated.
+2.6 Bi-Encoder vs Cross-Encoder ΓÇö Why Both Are Needed
+Property Bi-Encoder Cross-Encoder
+How it works Encodes JD and candidate SEPARATELY Reads JD and candidate
+into vectors. Scores = cosine similarity TOGETHER in one forward pass.
+between vectors. Score = relevance of the pair.
+Speed Very fast ΓÇö vectorized matrix multiply Slow ΓÇö one forward pass per (JD,
+across all candidates at once candidate) pair
+Quality Good for retrieval ΓÇö finds candidates that Better for ranking ΓÇö understands
+are semantically similar to the JD the interaction between JD
+requirements and candidate
+description
+Scale Can handle 100K in seconds Can handle ~300 in 30 seconds
+within the time budget
+Role in pipeline Fast first-pass: narrows 31K to 300 Deep final judgment: accurately re-
+ranks the 300
+Misses Candidates whose description uses Catches what bi-encoder missed ΓÇö
+different words for the same concept reads the actual content deeply
+=== PAGE 5 ===
+Property Bi-Encoder Cross-Encoder
+(partially caught by multi-query approach)
+The combination is the standard neural information retrieval architecture used in production search
+systems at Google, LinkedIn, and Flipkart. Bi-encoder for recall, cross-encoder for precision. This is
+what the JD is describing when it asks for 'ranking systems and retrieval pipeline experience' ΓÇö you
+built one.
+=== PAGE 6 ===
+Implementation Notes for the Pipeline
+Where Each Stage Lives in Your Code
+Stage File Key Function
+Title Filter config.py + TITLE_RELEVANCE_MAP dict lookup. Returns 0.02 for
+feature_extractor.py non-tech, 1.0 for core ML/AI. Runs in a single list
+comprehension.
+Bi-Encoder precompute_embeddings.py Offline: embed all candidates, save to .npy. Online: load
+Similarity (offline) + scoring_engine.py .npy, matrix multiply with 3 JD query vectors, weighted
+(online) sum.
+Feature feature_extractor.py Calls skill_scorer, career_analyzer, behavioral_scorer
+Scoring per candidate. Returns feature dict.
+Shortlist scoring_engine.py np.argsort(scores)[::-1][:300]. One line. Returns indices
+of top-300 candidates.
+Cross- cross_encoder_reranker.py Build (query, passage) pairs for top-300.
+Encoder cross_encoder.predict(pairs, batch_size=32). Blend
+scores. Return final top-100.
+The One Thing to Get Right
+MOST COMMON MISTAKE: Running cross-encoder BEFORE shortlisting. Always shortlist with
+composite score first, THEN run cross-encoder on the shortlist. Never pass raw unsorted
+candidates to the cross-encoder ΓÇö it will be slow and the quality gain from CE will be wasted on
+irrelevant candidates.
+END ΓÇö Pipeline Flow Section
+Replace Section 2 in Backend Logic Bible with this document.

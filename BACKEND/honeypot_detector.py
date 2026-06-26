@@ -2,6 +2,16 @@
 honeypot_detector.py — Module 3: Honeypot Detection
 Evidence accumulation model with sigmoid confidence score.
 ~80 of 100K candidates have subtly impossible profiles.
+
+All 8 checks implemented:
+  1. Career timeline gaps (stated vs computed duration)
+  2. Impossible experience start year
+  3. Overlapping roles
+  4. Expert zero-duration skill
+  5. Education impossible dates
+  6. YoE vs career history sum
+  7. Expert overload (9+ expert skills)
+  8. Assessment score contradiction (expert/advanced claim + low platform score)
 """
 
 from __future__ import annotations
@@ -9,6 +19,13 @@ from __future__ import annotations
 import math
 from datetime import date
 from typing import Optional
+
+from config import (
+    HONEYPOT_CONFIDENCE_THRESHOLDS,
+    HONEYPOT_PENALTIES,
+    HONEYPOT_ASSESSMENT_CONTRADICTION_THRESHOLD,
+    HONEYPOT_ASSESSMENT_EVIDENCE_POINTS,
+)
 
 
 def _months_overlap(start1: date, end1: date, start2: date, end2: date) -> int:
@@ -24,7 +41,16 @@ def _months_overlap(start1: date, end1: date, start2: date, end2: date) -> int:
 def detect_honeypot(candidate: dict) -> dict:
     """
     Run all 8 honeypot evidence checks.
-    Returns: {confidence: float, evidence_points: int, flags: list[str], penalty: float}
+
+    Returns:
+        honeypot_confidence      float   sigmoid probability [0,1]
+        honeypot_evidence_points int     raw accumulated evidence
+        honeypot_flags           list    human-readable flag descriptions
+        honeypot_penalty         float   score multiplier (0.0/0.15/0.55/1.0)
+        honeypot_tier            str     clean|suspicious|likely|impossible
+        risk_score               float   alias for honeypot_confidence
+        triggered_rules          list    alias for honeypot_flags
+        explanation              str     summary sentence
     """
     evidence_points = 0
     flags = []
@@ -130,28 +156,77 @@ def detect_honeypot(candidate: dict) -> dict:
         evidence_points += 20
         flags.append(f"Expert overload: claims expert in {expert_count} skills")
 
+    # ── Check 8: Assessment Score Contradiction ──────────────────────────────
+    # Candidate claims expert/advanced proficiency but platform assessment score
+    # is below HONEYPOT_ASSESSMENT_CONTRADICTION_THRESHOLD — direct contradiction.
+    for sk in skills:
+        skill_name = sk.get("name", "")
+        proficiency = sk.get("proficiency", "")
+        if proficiency in ("expert", "advanced") and skill_name in assessment_scores:
+            raw_score = assessment_scores[skill_name]
+            if raw_score is not None:
+                try:
+                    score_val = float(raw_score)
+                except (TypeError, ValueError):
+                    continue
+                if score_val < HONEYPOT_ASSESSMENT_CONTRADICTION_THRESHOLD:
+                    evidence_points += HONEYPOT_ASSESSMENT_EVIDENCE_POINTS
+                    flags.append(
+                        f"Assessment contradiction: '{skill_name}' claimed {proficiency} "
+                        f"but platform assessment scored {score_val:.0f}/100 "
+                        f"(threshold: {HONEYPOT_ASSESSMENT_CONTRADICTION_THRESHOLD})"
+                    )
+
     # ── Compute confidence score ──────────────────────────────────────────────
     # honeypot_confidence = 1 - exp(-evidence_points / 60)
     confidence = 1.0 - math.exp(-evidence_points / 60.0)
 
-    # ── Compute penalty ───────────────────────────────────────────────────────
-    if confidence < 0.30:
-        penalty = 1.00
+    # ── Compute penalty using config thresholds ───────────────────────────────
+    clean_thresh      = HONEYPOT_CONFIDENCE_THRESHOLDS["clean"]      # 0.30
+    suspicious_thresh = HONEYPOT_CONFIDENCE_THRESHOLDS["suspicious"]  # 0.55
+    likely_thresh     = HONEYPOT_CONFIDENCE_THRESHOLDS["likely"]      # 0.75
+
+    if confidence < clean_thresh:
+        penalty = HONEYPOT_PENALTIES["clean"]       # 1.00
         tier = "clean"
-    elif confidence < 0.55:
-        penalty = 0.55
+    elif confidence < suspicious_thresh:
+        penalty = HONEYPOT_PENALTIES["suspicious"]  # 0.55
         tier = "suspicious"
-    elif confidence < 0.75:
-        penalty = 0.15
+    elif confidence < likely_thresh:
+        penalty = HONEYPOT_PENALTIES["likely"]      # 0.15
         tier = "likely"
     else:
-        penalty = 0.00
+        penalty = HONEYPOT_PENALTIES["impossible"]  # 0.00
         tier = "impossible"
 
+    # ── Build explanation sentence ─────────────────────────────────────────────
+    if tier == "clean":
+        explanation = "Profile appears authentic. No significant anomalies detected."
+    elif tier == "suspicious":
+        explanation = (
+            f"Minor anomalies detected ({len(flags)} flag(s)). "
+            f"Score penalised to {int(penalty * 100)}% of original."
+        )
+    elif tier == "likely":
+        explanation = (
+            f"Profile likely synthetic ({len(flags)} flag(s)). "
+            f"Score severely penalised to {int(penalty * 100)}%."
+        )
+    else:
+        explanation = (
+            f"Profile is almost certainly a honeypot ({len(flags)} flag(s)). "
+            f"Score zeroed out. First flag: {flags[0] if flags else 'N/A'}"
+        )
+
     return {
+        # Primary fields used by pipeline
         "honeypot_confidence": round(confidence, 4),
         "honeypot_evidence_points": evidence_points,
         "honeypot_flags": flags,
         "honeypot_penalty": penalty,
         "honeypot_tier": tier,
+        # Alias fields as required by spec (same data, different keys)
+        "risk_score": round(confidence, 4),
+        "triggered_rules": flags,
+        "explanation": explanation,
     }

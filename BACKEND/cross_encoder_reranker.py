@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from config import CE_MODEL_NAME, CE_QUERY, CE_BATCH_SIZE, CE_SHORTLIST_SIZE, CE_WEIGHT
+from config import CE_MODEL_NAME, CE_QUERY, CE_BATCH_SIZE, CE_SHORTLIST_SIZE, CE_WEIGHT, ALGO_WEIGHT
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +108,11 @@ def rerank_with_cross_encoder(
     max_algo = max(algo_scores) if algo_scores else 1.0
     max_algo = max(max_algo, 1e-6)  # prevent divide by zero
 
-    # Apply blending
+    # Apply blending: ALGO_WEIGHT * normalised_algo + CE_WEIGHT * ce  (from config)
     for i, cand in enumerate(shortlisted):
         ce = ce_scores[i]
         normalized_algo = algo_scores[i] / max_algo
-        blended = (1.0 - CE_WEIGHT) * normalized_algo + CE_WEIGHT * ce
+        blended = ALGO_WEIGHT * normalized_algo + CE_WEIGHT * ce
         shortlisted[i]["ce_score"] = round(ce, 4)
         shortlisted[i]["blended_score"] = round(blended, 6)
         shortlisted[i]["ce_available"] = True

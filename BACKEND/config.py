@@ -43,20 +43,57 @@ CE_QUERY = (
 CE_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 BI_ENCODER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 CE_BATCH_SIZE = 32
-CE_SHORTLIST_SIZE = 300
+CE_SHORTLIST_SIZE = 300  # hard cap for large datasets (>1000 candidates)
 
-# ── Component Weights (must sum to ~1.0 before additive platform) ─────────────
+# ── CE Blend Weights (PDF Section 2.1 & 2.6) ─────────────────────────────────
+# Final score = ALGO_WEIGHT * composite_score + CE_WEIGHT * ce_score
+CE_WEIGHT = 0.60          # cross-encoder contribution
+ALGO_WEIGHT = 0.40        # algorithmic first-pass contribution  (= 1 - CE_WEIGHT)
+
+# ── Final Output Size ─────────────────────────────────────────────────────────
+FINAL_TOP_K = 100         # number of candidates in final submission
+
+# ── Embedding Batch Size ──────────────────────────────────────────────────────
+EMBEDDING_BATCH_SIZE = 256  # sentence-transformer encode batch size
+
+# ── Pipeline Scaling Rules (from PDF Section 2.3 & 2.4) ──────────────────────
+# If input has fewer than this many candidates, skip the title filter entirely.
+# Pass all candidates directly to bi-encoder scoring.
+SMALL_DATASET_THRESHOLD = 500
+
+# Dynamic shortlist thresholds
+_SHORTLIST_LARGE_THRESHOLD = 1000   # above this → hard cap of 300
+_SHORTLIST_MEDIUM_THRESHOLD = 200   # 200-1000 → 30% of input (capped at 300)
+_SHORTLIST_MEDIUM_RATIO = 0.30      # fraction of input for medium datasets
+
+
+def compute_dynamic_shortlist_size(n_candidates: int) -> int:
+    """
+    Compute CE shortlist size dynamically based on input size.
+    PDF Section 2.4:
+      input > 1,000   → 300 (hard cap)
+      input 200-1,000 → min(300, int(input * 0.30))
+      input 50-200    → all candidates
+      input < 50      → all candidates
+    All thresholds driven by module-level constants — no magic numbers.
+    """
+    if n_candidates > _SHORTLIST_LARGE_THRESHOLD:
+        return CE_SHORTLIST_SIZE
+    elif n_candidates >= _SHORTLIST_MEDIUM_THRESHOLD:
+        return min(CE_SHORTLIST_SIZE, int(n_candidates * _SHORTLIST_MEDIUM_RATIO))
+    else:
+        return n_candidates  # run CE on all candidates
+
+# ── Composite Score Weights (must sum to ~1.0 before additive platform) ───────
+# PDF Section 2.2 / Module 10.2
 WEIGHTS = {
     "skills": 0.35,
     "career": 0.30,
     "experience": 0.10,
     "location": 0.10,
     "education": 0.05,
-    # platform_quality is additive (max ~0.25), not in this sum
+    # platform_quality is additive (max ~0.30), not included in this sum
 }
-
-# CE blend: final = (1 - CE_WEIGHT) * algo + CE_WEIGHT * ce_score
-CE_WEIGHT = 0.60
 
 # ── Title Relevance Map ───────────────────────────────────────────────────────
 CORE_ML_AI_TITLES = [
@@ -276,3 +313,9 @@ HONEYPOT_PENALTIES = {
     "likely": 0.15,
     "impossible": 0.00,
 }
+
+# ── Honeypot Check 8: Assessment Score Contradiction ─────────────────────────
+# If a candidate claims expert/advanced for a skill but scores below this
+# threshold on the platform assessment, it's flagged as a contradiction.
+HONEYPOT_ASSESSMENT_CONTRADICTION_THRESHOLD = 40   # assessment score out of 100
+HONEYPOT_ASSESSMENT_EVIDENCE_POINTS = 25           # evidence points per contradiction

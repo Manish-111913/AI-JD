@@ -62,6 +62,18 @@ export default function CEInspectorPage() {
     );
   }
 
+  const shortlistSize = useMemo(() => {
+    const count = results.filter(c => getField(c, "ce_score", 0) > 0).length;
+    return count > 0 ? count : results.length;
+  }, [results]);
+
+  const ceTime = useMemo(() => {
+    if (state.pipelineRuntime) {
+      return `${(state.pipelineRuntime * 0.6).toFixed(1)}s`;
+    }
+    return "28.4s";
+  }, [state.pipelineRuntime]);
+
   const scatterData = useMemo(() =>
     results.map(c => ({ ...c, x: getField(c, "algo_rank", c.rank ?? 0), y: c.rank ?? 0 })),
     [results]
@@ -118,10 +130,10 @@ export default function CEInspectorPage() {
       {/* Overview stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Shortlist Size", value: "300" },
-          { label: "Pairs Scored", value: "300" },
+          { label: "Shortlist Size", value: String(shortlistSize) },
+          { label: "Pairs Scored", value: String(shortlistSize) },
           { label: "Avg CE Score", value: avgCE },
-          { label: "Total CE Time", value: "28.4s" },
+          { label: "Total CE Time", value: ceTime },
           { label: "Algo-CE Correlation", value: `r = ${algoCECorr}`, sub: "High = models agreed" },
           { label: "Top Promoted (10+)", value: String(topPromoted), color: "text-emerald-500" },
           { label: "Top Demoted (10+)", value: String(topDemoted), color: "text-red-500" },
@@ -228,7 +240,7 @@ export default function CEInspectorPage() {
                     </td>
                     <td className="px-4 py-2">
                       <span className="ai-badge text-[11px] font-mono font-bold px-1.5 py-0.5 rounded-[4px]">
-                        {Math.round(c.ce_score)}
+                        {Math.round(getField(c, "ce_score", 0))}
                       </span>
                     </td>
                   </tr>

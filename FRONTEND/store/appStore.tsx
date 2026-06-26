@@ -158,14 +158,14 @@ type Action =
   | { type: 'SET_JD_DATA'; payload: JDData | null };
 
 const PIPELINE_STAGES: PipelineStage[] = [
-  { id: 1, name: 'Loading & normalizing candidates', description: 'Parse JSON/JSONL, validate schema, normalize fields', status: 'pending', durationMs: 300 },
-  { id: 2, name: 'Running title pre-filter', description: 'Assign title_relevance_score. ~69% non-tech titles → near-zero', status: 'pending', durationMs: 400 },
-  { id: 3, name: 'Detecting honeypot profiles', description: '4-category check, sigmoid confidence score (0–1)', status: 'pending', durationMs: 700 },
-  { id: 4, name: 'Computing semantic similarity', description: '3 JD queries × candidate embeddings → cosine similarity', status: 'pending', durationMs: 1100 },
-  { id: 5, name: 'Scoring skill trust', description: 'proficiency × sigmoid(duration) × log(endorsements) × assessment', status: 'pending', durationMs: 900 },
-  { id: 6, name: 'Analyzing career + behavioral', description: 'Company classification, production signals, availability multiplier', status: 'pending', durationMs: 700 },
-  { id: 7, name: 'First-pass ranking — shortlisting', description: 'Sort all candidates by composite score. Top 300 selected.', status: 'pending', durationMs: 500 },
-  { id: 8, name: 'Cross-encoder re-ranking', description: 'Local ms-marco-MiniLM-L-6-v2: (JD query, candidate) pairs. 40% algo + 60% CE blend.', status: 'pending', durationMs: 2800, isCE: true },
+  { id: 1, name: 'Title Pre-Filter', description: 'Lookup table lookup. Skip if dataset < 500 candidates.', status: 'pending', durationMs: 300 },
+  { id: 2, name: 'Bi-Encoder Semantic Similarity', description: 'Compute 3-query cosine similarity on all tech candidates.', status: 'pending', durationMs: 400 },
+  { id: 3, name: 'Honeypot Detection', description: 'Accumulate 8-check evidence flags to detect fake profiles.', status: 'pending', durationMs: 700 },
+  { id: 4, name: '6-Component Feature Scoring', description: 'Compute composite score on all tech candidates.', status: 'pending', durationMs: 1100 },
+  { id: 5, name: 'Sort & Shortlist', description: 'Sort by composite score and shortlist dynamic top-N candidates.', status: 'pending', durationMs: 500 },
+  { id: 6, name: 'Cross-Encoder Re-Ranking', description: 'Batch process ms-marco-MiniLM-L-6-v2 and blend with composite scores.', status: 'pending', durationMs: 2800, isCE: true },
+  { id: 7, name: 'Finalizing Ranks', description: 'Sort by blended score, select top 100, and generate AI reasoning.', status: 'pending', durationMs: 400 },
+  { id: 8, name: 'Pipeline Complete', description: 'Ranks and statistics finalized and ready for review.', status: 'pending', durationMs: 300 },
 ];
 
 const initialState: AppState = {
