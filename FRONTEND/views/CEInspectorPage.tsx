@@ -6,7 +6,7 @@ import {
   BarChart, Bar, Cell, CartesianGrid
 } from "recharts";
 import { useAppContext, BackendResult } from "@/store/appStore";
-import { Cpu, TrendingUp, TrendingDown, Search, AlertTriangle } from "lucide-react";
+import { Cpu, TrendingUp, TrendingDown, Search, AlertTriangle, Sparkles, Loader2, Send, MessageSquare } from "lucide-react";
 
 // Helper to safely get a numeric value from top-level or features dict
 function getField(c: BackendResult, key: string, fallback: number = 0): number {
@@ -331,6 +331,136 @@ export default function CEInspectorPage() {
           </div>
         </div>
       </section>
+
+      {/* API Mode: Ask AI + Explain Score Panel */}
+      {state.apiSettings?.apiModeEnabled && state.selectedBackendCandidate && (
+        <section className="rounded-xl border border-purple-200 dark:border-purple-800/50 bg-purple-50 dark:bg-purple-950/10 p-5 space-y-4">
+          <h2 className="text-[14px] font-semibold text-foreground flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" /> AI Analysis — {state.selectedBackendCandidate.candidate_id}
+          </h2>
+          <ExplainScorePanel candidate={state.selectedBackendCandidate} />
+          <AskAIPanel candidate={state.selectedBackendCandidate} />
+        </section>
+      )}
+
+    </div>
+  );
+}
+
+// ── Explain Score Panel ───────────────────────────────────────────────────────
+function ExplainScorePanel({ candidate }: { candidate: BackendResult }) {
+  const [loading, setLoading] = useState(false);
+  const [explanation, setExplanation] = useState("");
+  const [error, setError] = useState("");
+
+  const handleExplain = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("http://localhost:8000/api/explain-score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidate_id: candidate.candidate_id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setExplanation(data.explanation || "");
+      } else {
+        setError(data.error || "Failed to generate explanation.");
+      }
+    } catch {
+      setError("Could not reach backend.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] font-medium text-foreground">
+          Score: {((candidate.final_score ?? 0) * 100).toFixed(1)}/100
+        </span>
+        <button
+          onClick={handleExplain}
+          disabled={loading}
+          className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg border border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-colors disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+          {loading ? "Explaining..." : "Explain Score"}
+        </button>
+      </div>
+      {error && <p className="text-[12px] text-red-500">{error}</p>}
+      {explanation && (
+        <div className="rounded-lg border border-border bg-background p-3 text-[13px] text-foreground leading-relaxed">
+          {explanation}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Ask AI Panel ──────────────────────────────────────────────────────────────
+function AskAIPanel({ candidate }: { candidate: BackendResult }) {
+  const [question, setQuestion] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [answer, setAnswer] = useState("");
+  const [error, setError] = useState("");
+
+  const handleAsk = async () => {
+    if (!question.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("http://localhost:8000/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: `About candidate ${candidate.candidate_id} (${candidate.current_title}): ${question}`,
+          context_size: 100,
+          add_to_history: false,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAnswer(data.answer || "");
+      } else {
+        setError(data.error || "Failed to get answer.");
+      }
+    } catch {
+      setError("Could not reach backend.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="text-[12px] font-medium text-muted-foreground flex items-center gap-1.5">
+        <MessageSquare className="w-3.5 h-3.5" /> Ask AI about this candidate
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          value={question}
+          onChange={e => setQuestion(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAsk(); } }}
+          placeholder="e.g. Is this person likely to negotiate salary?"
+          className="flex-1 text-[13px] px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+        />
+        <button
+          onClick={handleAsk}
+          disabled={loading || !question.trim()}
+          className="flex-shrink-0 w-9 h-9 rounded-lg bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center transition-colors disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+        </button>
+      </div>
+      {error && <p className="text-[12px] text-red-500">{error}</p>}
+      {answer && (
+        <div className="rounded-lg border border-border bg-background p-3 text-[13px] text-foreground leading-relaxed">
+          {answer}
+        </div>
+      )}
     </div>
   );
 }

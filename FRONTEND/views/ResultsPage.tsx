@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   TrendingUp, TrendingDown, Minus, Search, ChevronLeft, ChevronRight,
   Download, AlertTriangle, X, Shield, Brain, Cpu,
-  CheckCircle2, XCircle, SlidersHorizontal, MapPin, Briefcase, Star, Filter,
+  CheckCircle2, XCircle, SlidersHorizontal, MapPin, Briefcase, Star, Filter, Sparkles,
 } from "lucide-react";
 import { useAppContext, BackendResult } from "@/store/appStore";
 import { Button } from "@/components/ui/button";

@@ -7,6 +7,22 @@ import type { CandidatePreviewItem } from "@/types/candidateUpload";
 export type AppStatus = 'idle' | 'loading' | 'ranking' | 'done' | 'error';
 export type ExecutionMode = 'competition' | 'demo';
 export type Theme = 'light' | 'dark';
+export type ApiProvider = 'gemini' | 'openai';
+
+export interface ApiSettings {
+  provider: ApiProvider;
+  apiModeEnabled: boolean;
+  fallbackEnabled: boolean;
+  geminiKeySet: boolean;
+  openaiKeySet: boolean;
+  modelConfig: {
+    reasoning_model: string;
+    jd_parse_model: string;
+    chat_model: string;
+  };
+  sessionTokens: number;
+  sessionCostUsd: number;
+}
 
 export interface JDData {
   success: boolean;
@@ -138,6 +154,8 @@ export interface AppState {
   totalCandidatesProcessed?: number;
   // JD data from upload-jd endpoint
   jdData: JDData | null;
+  // API Mode settings
+  apiSettings: ApiSettings | null;
 }
 
 type Action =
@@ -155,7 +173,8 @@ type Action =
   | { type: 'SET_EXECUTION_MODE'; payload: ExecutionMode }
   | { type: 'SET_THEME'; payload: Theme }
   | { type: 'SET_PIPELINE_RUNTIME'; payload: { runtime: number; total: number } }
-  | { type: 'SET_JD_DATA'; payload: JDData | null };
+  | { type: 'SET_JD_DATA'; payload: JDData | null }
+  | { type: 'SET_API_SETTINGS'; payload: Partial<ApiSettings> };
 
 const PIPELINE_STAGES: PipelineStage[] = [
   { id: 1, name: 'Title Pre-Filter', description: 'Lookup table lookup. Skip if dataset < 500 candidates.', status: 'pending', durationMs: 300 },
@@ -194,6 +213,7 @@ const initialState: AppState = {
   executionMode: 'competition',
   theme: 'light',
   jdData: null,
+  apiSettings: null,
 };
 
 const appReducer = (state: AppState, action: Action): AppState => {
@@ -228,6 +248,13 @@ const appReducer = (state: AppState, action: Action): AppState => {
       return { ...state, pipelineRuntime: action.payload.runtime, totalCandidatesProcessed: action.payload.total };
     case 'SET_JD_DATA':
       return { ...state, jdData: action.payload };
+    case 'SET_API_SETTINGS':
+      return {
+        ...state,
+        apiSettings: state.apiSettings
+          ? { ...state.apiSettings, ...action.payload }
+          : (action.payload as ApiSettings),
+      };
     default:
       return state;
   }

@@ -2,6 +2,11 @@
 api.py — FastAPI Backend for Redrob Candidate Ranking System
 Serves all endpoints consumed by the Next.js frontend.
 Real-time pipeline progress streamed via Server-Sent Events (SSE).
+
+Modes:
+  Competition Mode (default) — fully local, deterministic, no external APIs.
+  API Mode — adds LLM-powered features (reasoning, chat, JD parsing, etc.)
+             while keeping the local ranking engine authoritative.
 """
 
 from __future__ import annotations
@@ -22,6 +27,13 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+# ── Load .env for API keys (API Mode only) ────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+except ImportError:
+    pass  # python-dotenv not installed — API Mode will require manual env vars
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -46,6 +58,22 @@ _state = {
     "jd_parsed": True,         # JD is hardcoded from the hackathon bundle
     "model_loaded": False,
     "error": None,
+    # ── API Mode state (never affects Competition Mode) ─────────────────────
+    "api_settings": {
+        "provider": os.getenv("API_MODE_PROVIDER", "gemini"),
+        "api_mode_enabled": False,   # OFF by default — Competition Mode is default
+        "fallback_enabled": os.getenv("API_FALLBACK_ENABLED", "true").lower() == "true",
+        "gemini_key_set": bool(os.getenv("GEMINI_API_KEY", "")),
+        "openai_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
+        "model_config": {
+            "reasoning_model": os.getenv("GEMINI_REASONING_MODEL", "gemini-1.5-flash"),
+            "jd_parse_model": os.getenv("GEMINI_JD_PARSE_MODEL", "gemini-1.5-pro"),
+            "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-1.5-flash"),
+        },
+    },
+    "session_tokens": 0,
+    "session_cost_usd": 0.0,
+    "chat_history": [],
 }
 
 # ── Import all backend modules ────────────────────────────────────────────────
@@ -1179,7 +1207,441 @@ async def export_csv(body: ExportRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
-    return {"status": "ok", "service": "Redrob Candidate Ranker API v1.0"}
+    api_mode = _state["api_settings"]["api_mode_enabled"]
+    return {
+        "status": "ok",
+        "service": "Redrob Candidate Ranker API v1.0",
+        "mode": "api" if api_mode else "competition",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# API MODE ENDPOINTS
+# These endpoints are purely additive — they do NOT modify the ranking pipeline.
+# Competition Mode endpoints above remain completely unchanged.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_provider():
+    """
+    Build and return the active LLM provider instance.
+    Returns None if API Mode is disabled or no key is set.
+    """
+    settings = _state["api_settings"]
+    if not settings.get("api_mode_enabled"):
+        return None
+    provider_name = settings.get("provider", "gemini")
+    # Retrieve key from environment (never from state — security)
+    if provider_name == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY", "")
+    elif provider_name == "openai":
+        api_key = os.getenv("OPENAI_API_KEY", "")
+    else:
+        return None
+    if not api_key:
+        return None
+    try:
+        from api_providers import get_provider
+        return get_provider(
+            provider_name=provider_name,
+            api_key=api_key,
+            model_config=settings.get("model_config", {}),
+        )
+    except Exception as e:
+        logger.error(f"Provider init failed: {e}")
+        return None
+
+
+def _add_session_usage(tokens: int, cost: float):
+    """Track cumulative token usage and cost for the session."""
+    _state["session_tokens"] = _state.get("session_tokens", 0) + tokens
+    _state["session_cost_usd"] = round(_state.get("session_cost_usd", 0.0) + cost, 6)
+
+
+# ── GET /api/api-settings ─────────────────────────────────────────────────────
+@app.get("/api/api-settings")
+async def get_api_settings():
+    """Return current API Mode configuration (never returns actual keys)."""
+    s = _state["api_settings"]
+    return {
+        "provider": s.get("provider", "gemini"),
+        "api_mode_enabled": s.get("api_mode_enabled", False),
+        "fallback_enabled": s.get("fallback_enabled", True),
+        "gemini_key_set": bool(os.getenv("GEMINI_API_KEY", "")),
+        "openai_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
+        "model_config": s.get("model_config", {}),
+        "session_tokens": _state.get("session_tokens", 0),
+        "session_cost_usd": _state.get("session_cost_usd", 0.0),
+        "available_models": {
+            "gemini": {
+                "reasoning": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
+                "jd_parse": ["gemini-1.5-pro", "gemini-1.5-flash"],
+                "chat": ["gemini-1.5-flash", "gemini-1.5-pro"],
+            },
+            "openai": {
+                "reasoning": ["gpt-4o-mini", "gpt-4o"],
+                "jd_parse": ["gpt-4o", "gpt-4o-mini"],
+                "chat": ["gpt-4o-mini", "gpt-4o"],
+            },
+        },
+    }
+
+
+# ── POST /api/api-settings ────────────────────────────────────────────────────
+class ApiSettingsRequest(BaseModel):
+    provider: Optional[str] = None
+    api_mode_enabled: Optional[bool] = None
+    fallback_enabled: Optional[bool] = None
+    model_config: Optional[dict] = None
+
+
+@app.post("/api/api-settings")
+async def update_api_settings(body: ApiSettingsRequest):
+    """Update API Mode configuration. Keys are set via .env, not this endpoint."""
+    s = _state["api_settings"]
+    if body.provider is not None:
+        if body.provider not in ("gemini", "openai"):
+            raise HTTPException(400, "provider must be 'gemini' or 'openai'")
+        s["provider"] = body.provider
+        # Reset model config to provider defaults
+        if body.provider == "gemini":
+            s["model_config"] = {
+                "reasoning_model": os.getenv("GEMINI_REASONING_MODEL", "gemini-1.5-flash"),
+                "jd_parse_model": os.getenv("GEMINI_JD_PARSE_MODEL", "gemini-1.5-pro"),
+                "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-1.5-flash"),
+            }
+        else:
+            s["model_config"] = {
+                "reasoning_model": os.getenv("OPENAI_REASONING_MODEL", "gpt-4o-mini"),
+                "jd_parse_model": os.getenv("OPENAI_JD_PARSE_MODEL", "gpt-4o"),
+                "chat_model": os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+            }
+    if body.api_mode_enabled is not None:
+        s["api_mode_enabled"] = body.api_mode_enabled
+    if body.fallback_enabled is not None:
+        s["fallback_enabled"] = body.fallback_enabled
+    if body.model_config is not None:
+        s["model_config"].update(body.model_config)
+    return {"success": True, "settings": await get_api_settings()}
+
+
+# ── POST /api/api-settings/validate ──────────────────────────────────────────
+class ValidateApiRequest(BaseModel):
+    provider: str
+    api_key: str  # Key passed directly for validation only — not stored
+    model_config: Optional[dict] = None
+
+
+@app.post("/api/api-settings/validate")
+async def validate_api_key(body: ValidateApiRequest):
+    """Test an API key without storing it. Sets env var temporarily for validation."""
+    if not body.api_key or len(body.api_key) < 10:
+        return {"success": False, "error": "API key appears too short or empty."}
+    try:
+        from api_providers import get_provider
+        provider = get_provider(
+            provider_name=body.provider,
+            api_key=body.api_key,
+            model_config=body.model_config or {},
+        )
+        resp = await provider.validate_connection()
+        if resp.success:
+            # Key validated — store in environment for this session
+            env_key = "GEMINI_API_KEY" if body.provider == "gemini" else "OPENAI_API_KEY"
+            os.environ[env_key] = body.api_key
+            _state["api_settings"][f"{body.provider}_key_set"] = True
+        return {
+            "success": resp.success,
+            "model_used": resp.model_used,
+            "error": resp.error if not resp.success else None,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ── POST /api/parse-jd-llm ────────────────────────────────────────────────────
+class ParseJdLlmRequest(BaseModel):
+    jd_text: str
+
+
+@app.post("/api/parse-jd-llm")
+async def parse_jd_llm(body: ParseJdLlmRequest):
+    """
+    Parse a job description using LLM (API Mode only).
+    Falls back to indicating failure — caller should use rule-based parser.
+    """
+    if not body.jd_text or len(body.jd_text.strip()) < 50:
+        raise HTTPException(400, "JD text too short (minimum 50 characters).")
+
+    provider = _get_provider()
+    if not provider:
+        raise HTTPException(503, "API Mode not enabled or no API key configured.")
+
+    from services import ApiEnhancedService
+    svc = ApiEnhancedService(
+        provider=provider,
+        fallback_enabled=_state["api_settings"].get("fallback_enabled", True),
+    )
+    result = await svc.parse_jd_with_llm(body.jd_text)
+    if result.get("success"):
+        _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
+    return result
+
+
+# ── POST /api/generate-reasoning ─────────────────────────────────────────────
+class GenerateReasoningRequest(BaseModel):
+    candidate_ids: Optional[list[str]] = None  # None = all results
+    jd_context: Optional[str] = None
+
+
+@app.post("/api/generate-reasoning")
+async def generate_reasoning_api(body: GenerateReasoningRequest):
+    """
+    Generate LLM reasoning for ranked candidates (API Mode).
+    The ranking order and scores are UNCHANGED — only the reasoning text is enhanced.
+    """
+    if not _state["results"]:
+        raise HTTPException(400, "No ranking results available. Run ranking first.")
+
+    provider = _get_provider()
+    if not provider:
+        raise HTTPException(503, "API Mode not enabled or no API key configured.")
+
+    results = _state["results"]
+    if body.candidate_ids:
+        results = [r for r in results if r.get("candidate_id") in body.candidate_ids]
+
+    from services import ApiEnhancedService
+    svc = ApiEnhancedService(
+        provider=provider,
+        fallback_enabled=_state["api_settings"].get("fallback_enabled", True),
+    )
+    enhanced, stats = await svc.generate_llm_reasoning(results, body.jd_context)
+
+    # Update in-memory results with enhanced reasoning (scores/ranks unchanged)
+    enhanced_map = {r["candidate_id"]: r for r in enhanced}
+    for i, r in enumerate(_state["results"]):
+        cid = r.get("candidate_id", "")
+        if cid in enhanced_map:
+            _state["results"][i]["reasoning"] = enhanced_map[cid].get("reasoning", r.get("reasoning", ""))
+            _state["results"][i]["llm_reasoning"] = enhanced_map[cid].get("llm_reasoning", False)
+            _state["results"][i]["reasoning_model"] = enhanced_map[cid].get("reasoning_model", "")
+
+    _add_session_usage(stats["total_tokens"], stats["total_cost_usd"])
+    return {
+        "success": True,
+        "stats": stats,
+        "session_tokens": _state["session_tokens"],
+        "session_cost_usd": _state["session_cost_usd"],
+    }
+
+
+# ── POST /api/chat ────────────────────────────────────────────────────────────
+class ChatRequest(BaseModel):
+    question: str
+    context_size: int = 100  # How many ranked candidates to include as context
+    add_to_history: bool = True
+
+
+@app.post("/api/chat")
+async def recruiter_chat(body: ChatRequest):
+    """
+    Answer a recruiter's natural language question about ranked candidates.
+    Only available in API Mode.
+    """
+    if not body.question or not body.question.strip():
+        raise HTTPException(400, "Question cannot be empty.")
+
+    if not _state["results"]:
+        return {
+            "success": False,
+            "answer": "No ranking results available. Please run the ranking pipeline first, then ask your question.",
+            "citations": [],
+        }
+
+    provider = _get_provider()
+    if not provider:
+        return {
+            "success": False,
+            "answer": "AI Chat requires API Mode to be enabled. Go to API Settings to configure your API key.",
+            "citations": [],
+        }
+
+    from services import ApiEnhancedService
+    svc = ApiEnhancedService(provider=provider)
+    context_size = max(1, min(body.context_size, len(_state["results"])))
+    result = await svc.chat(
+        question=body.question,
+        ranked_results=_state["results"],
+        context_size=context_size,
+        conversation_history=_state.get("chat_history", []),
+    )
+
+    # Save to conversation history
+    if body.add_to_history and result.get("success"):
+        history = _state.get("chat_history", [])
+        history.append({"role": "user", "content": body.question})
+        history.append({"role": "assistant", "content": result.get("answer", "")})
+        _state["chat_history"] = history[-20:]  # Keep last 20 messages
+
+    _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
+    result["session_tokens"] = _state["session_tokens"]
+    result["session_cost_usd"] = _state["session_cost_usd"]
+    return result
+
+
+# ── DELETE /api/chat/history ──────────────────────────────────────────────────
+@app.delete("/api/chat/history")
+async def clear_chat_history():
+    """Clear conversation history."""
+    _state["chat_history"] = []
+    return {"success": True}
+
+
+# ── POST /api/explain-score ───────────────────────────────────────────────────
+class ExplainScoreRequest(BaseModel):
+    candidate_id: str
+    jd_context: Optional[str] = None
+
+
+@app.post("/api/explain-score")
+async def explain_score(body: ExplainScoreRequest):
+    """
+    Explain in 4-6 sentences why a candidate received their score.
+    """
+    # Find candidate in results
+    candidate = next(
+        (r for r in _state["results"] if r.get("candidate_id") == body.candidate_id),
+        None,
+    )
+    if not candidate:
+        raise HTTPException(404, f"Candidate {body.candidate_id} not found in results.")
+
+    provider = _get_provider()
+    if not provider:
+        raise HTTPException(503, "API Mode not enabled or no API key configured.")
+
+    from services import ApiEnhancedService
+    svc = ApiEnhancedService(provider=provider)
+    result = await svc.explain_score(candidate, body.jd_context)
+    _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
+    return result
+
+
+# ── POST /api/compare-candidates ─────────────────────────────────────────────
+class CompareCandidatesRequest(BaseModel):
+    candidate_ids: list[str]  # 2-3 candidate IDs
+    jd_context: Optional[str] = None
+
+
+@app.post("/api/compare-candidates")
+async def compare_candidates(body: CompareCandidatesRequest):
+    """
+    Compare 2-3 candidates side by side with AI analysis.
+    """
+    if len(body.candidate_ids) < 2 or len(body.candidate_ids) > 3:
+        raise HTTPException(400, "Provide 2-3 candidate IDs for comparison.")
+
+    # Resolve candidates from results
+    all_data = _state["results"] + _state["candidates"]
+    candidates = []
+    for cid in body.candidate_ids:
+        match = next((r for r in all_data if r.get("candidate_id") == cid), None)
+        if match:
+            candidates.append(match)
+    if len(candidates) < 2:
+        raise HTTPException(404, "Could not find all specified candidates in results.")
+
+    provider = _get_provider()
+    if not provider:
+        raise HTTPException(503, "API Mode not enabled or no API key configured.")
+
+    from services import ApiEnhancedService
+    svc = ApiEnhancedService(provider=provider)
+    result = await svc.compare_candidates(candidates, body.jd_context)
+    _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
+    return result
+
+
+# ── POST /api/executive-summary ───────────────────────────────────────────────
+class ExecutiveSummaryRequest(BaseModel):
+    role_title: str = "Senior AI Engineer"
+    top_n: int = 20
+
+
+@app.post("/api/executive-summary")
+async def executive_summary(body: ExecutiveSummaryRequest):
+    """
+    Generate a 300-word executive hiring brief for the hiring manager.
+    """
+    if not _state["results"]:
+        raise HTTPException(400, "No results available. Run ranking first.")
+
+    provider = _get_provider()
+    if not provider:
+        raise HTTPException(503, "API Mode not enabled or no API key configured.")
+
+    from services import ApiEnhancedService
+    svc = ApiEnhancedService(provider=provider)
+    result = await svc.executive_summary(
+        _state["results"][:body.top_n],
+        role_title=body.role_title,
+    )
+    _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
+    result["session_tokens"] = _state["session_tokens"]
+    result["session_cost_usd"] = _state["session_cost_usd"]
+    return result
+
+
+# ── POST /api/skill-gap ───────────────────────────────────────────────────────
+class SkillGapRequest(BaseModel):
+    candidate_id: str
+    jd_requirements: Optional[dict] = None
+
+
+@app.post("/api/skill-gap")
+async def skill_gap_analysis(body: SkillGapRequest):
+    """
+    Analyze the skill gap between a candidate and the JD requirements.
+    """
+    all_data = _state["results"] + _state["candidates"]
+    candidate = next(
+        (r for r in all_data if r.get("candidate_id") == body.candidate_id),
+        None,
+    )
+    if not candidate:
+        raise HTTPException(404, f"Candidate {body.candidate_id} not found.")
+
+    provider = _get_provider()
+    if not provider:
+        raise HTTPException(503, "API Mode not enabled or no API key configured.")
+
+    from services import ApiEnhancedService
+    svc = ApiEnhancedService(provider=provider)
+    result = await svc.skill_gap_analysis(candidate, body.jd_requirements)
+    _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
+    return result
+
+
+# ── GET /api/session-stats ────────────────────────────────────────────────────
+@app.get("/api/session-stats")
+async def session_stats():
+    """Return current session API usage statistics."""
+    return {
+        "session_tokens": _state.get("session_tokens", 0),
+        "session_cost_usd": _state.get("session_cost_usd", 0.0),
+        "api_mode_enabled": _state["api_settings"].get("api_mode_enabled", False),
+        "provider": _state["api_settings"].get("provider", "gemini"),
+        "model_config": _state["api_settings"].get("model_config", {}),
+    }
+
+
+# ── DELETE /api/session-stats ─────────────────────────────────────────────────
+@app.delete("/api/session-stats")
+async def reset_session_stats():
+    """Reset session token counter and cost."""
+    _state["session_tokens"] = 0
+    _state["session_cost_usd"] = 0.0
+    return {"success": True}
 
 
 if __name__ == "__main__":

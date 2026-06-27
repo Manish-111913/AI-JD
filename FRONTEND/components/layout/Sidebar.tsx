@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   LayoutDashboard, FileText, Zap, Settings2, ListOrdered,
-  BarChart3, Cpu, Download, Sun, Moon, Users, ChevronRight
+  BarChart3, Cpu, Download, Sun, Moon, Users, ChevronRight,
+  Key, MessageSquare, Sparkles
 } from "lucide-react";
 import { useAppContext } from "@/store/appStore";
 
@@ -23,6 +24,10 @@ const NAV = [
     { href: "/analytics", icon: BarChart3, label: "Analytics" },
     { href: "/ce-inspector", icon: Cpu, label: "CE Inspector" },
     { href: "/export", icon: Download, label: "Export" },
+  ]},
+  { section: "AI Mode", items: [
+    { href: "/api-settings", icon: Key, label: "API Settings" },
+    { href: "/chat", icon: MessageSquare, label: "AI Chat" },
   ]},
 ];
 
@@ -118,11 +123,15 @@ export default function Sidebar() {
         {/* Mode badge */}
         <div className="flex items-center gap-1.5 px-2 mb-2">
           <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-[4px] border ${
-            state.executionMode === 'competition'
-              ? 'border-border text-muted-foreground bg-muted/50'
-              : 'border-ai/30 text-ai bg-ai/8'
+            state.apiSettings?.apiModeEnabled
+              ? 'border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 flex items-center gap-0.5'
+              : state.executionMode === 'competition'
+                ? 'border-border text-muted-foreground bg-muted/50'
+                : 'border-ai/30 text-ai bg-ai/8'
           }`}>
-            {state.executionMode === 'competition' ? 'Competition' : 'Demo'}
+            {state.apiSettings?.apiModeEnabled ? (
+              <><Sparkles className="w-2.5 h-2.5" /> API Mode</>
+            ) : state.executionMode === 'competition' ? 'Competition' : 'Demo'}
           </span>
           <ChevronRight className="w-2.5 h-2.5 text-muted-foreground/50" />
           <span className="text-[10px] text-muted-foreground">Mode</span>

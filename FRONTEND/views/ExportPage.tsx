@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Download, CheckCircle2, XCircle, ExternalLink, FileText, Github } from "lucide-react";
+import { Download, CheckCircle2, XCircle, ExternalLink, FileText, Github, Sparkles, Loader2, Coins } from "lucide-react";
 import { useAppContext } from "@/store/appStore";
 import { RankedCandidate } from "@/data/mockData";
 import { validateSubmission, exportToCsv } from "@/utils/csvExport";
@@ -32,10 +32,57 @@ export default function ExportPage() {
   const [metaFilled, setMetaFilled] = useState(false);
   const [githubUrl, setGithubUrl] = useState("");
   const [sandboxUrl, setSandboxUrl] = useState(typeof window !== "undefined" ? window.location.origin : "");
+  // API Mode: Executive Brief
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [briefText, setBriefText] = useState("");
+  const [briefError, setBriefError] = useState("");
+  const [briefThemes, setBriefThemes] = useState<string[]>([]);
+  const [briefInterviews, setBriefInterviews] = useState<string[]>([]);
+  const [sessionTokens, setSessionTokens] = useState(0);
+  const [sessionCost, setSessionCost] = useState(0);
+
+  const apiModeEnabled = state.apiSettings?.apiModeEnabled;
 
   const handleDownload = () => {
     exportToCsv(results);
     setDownloaded(true);
+  };
+
+  const handleGenerateBrief = async () => {
+    setBriefLoading(true);
+    setBriefError("");
+    try {
+      const res = await fetch("http://localhost:8000/api/executive-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role_title: "Senior AI Engineer", top_n: 20 }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBriefText(data.summary || "");
+        setBriefThemes(data.key_themes || []);
+        setBriefInterviews(data.recommended_interviews || []);
+        if (data.session_tokens) setSessionTokens(data.session_tokens);
+        if (data.session_cost_usd) setSessionCost(data.session_cost_usd);
+      } else {
+        setBriefError(data.error || "Failed to generate brief.");
+      }
+    } catch {
+      setBriefError("Could not reach backend.");
+    } finally {
+      setBriefLoading(false);
+    }
+  };
+
+  const handleDownloadBrief = () => {
+    if (!briefText) return;
+    const blob = new Blob([briefText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "executive_brief.txt";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const allValid = validation.valid;
@@ -149,6 +196,81 @@ export default function ExportPage() {
         {!allValid && <p className="text-[12px] text-muted-foreground">Run ranking first to generate valid results.</p>}
         {downloaded && <span className="text-[12px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Downloaded</span>}
       </section>
+
+      {/* API Mode: AI Executive Brief */}
+      {apiModeEnabled && (
+        <section className="rounded-xl border border-purple-200 dark:border-purple-800/50 bg-purple-50 dark:bg-purple-950/10 p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-[14px] font-semibold text-foreground flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-500" /> AI Executive Brief
+              </h2>
+              <p className="text-[12px] text-muted-foreground mt-0.5">
+                Generate a 300-word hiring summary for your hiring manager, analyzing the top 20 candidates.
+              </p>
+            </div>
+            <Button
+              onClick={handleGenerateBrief}
+              disabled={briefLoading || !allValid}
+              className="gap-2 bg-purple-600 hover:bg-purple-700 text-white text-[13px] flex-shrink-0"
+            >
+              {briefLoading
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating...</>
+                : <><Sparkles className="w-3.5 h-3.5" /> Generate Brief</>
+              }
+            </Button>
+          </div>
+
+          {briefError && (
+            <div className="text-[12px] text-red-600 dark:text-red-400 flex items-center gap-1.5">
+              <XCircle className="w-3.5 h-3.5" /> {briefError}
+            </div>
+          )}
+
+          {briefText && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-3"
+            >
+              <div className="rounded-lg border border-border bg-background p-4 text-[13px] text-foreground leading-relaxed whitespace-pre-line">
+                {briefText}
+              </div>
+              {briefThemes.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">KEY THEMES</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {briefThemes.map(t => (
+                      <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50">{t}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {briefInterviews.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">RECOMMENDED INTERVIEWS</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {briefInterviews.map(id => (
+                      <span key={id} className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50">{id}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDownloadBrief}
+                  className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted/30 text-foreground transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Brief (.txt)
+                </button>
+              </div>
+              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Coins className="w-3 h-3" /> Session: {sessionTokens.toLocaleString()} tokens · ${sessionCost.toFixed(4)}
+              </div>
+            </motion.div>
+          )}
+        </section>
+      )}
 
       {/* Metadata guide */}
       <section>

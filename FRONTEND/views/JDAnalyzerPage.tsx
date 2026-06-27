@@ -624,6 +624,14 @@ function JDResults({ data, onReset }: { data: JDData; onReset: () => void }) {
 export default function JDAnalyzerPage() {
   const { state, dispatch } = useAppContext();
   const jdData = state.jdData;
+  const apiModeEnabled = state.apiSettings?.apiModeEnabled;
+
+  // Custom JD paste panel state (API Mode only)
+  const [showCustomJD, setShowCustomJD] = useState(false);
+  const [customJDText, setCustomJDText] = useState("");
+  const [parsingLLM, setParsingLLM] = useState(false);
+  const [parseError, setParseError] = useState("");
+  const [llmParsedData, setLlmParsedData] = useState<JDData | null>(null);
 
   const handleAnalyzed = (data: JDData) => {
     dispatch({ type: 'SET_JD_DATA', payload: data });
@@ -631,19 +639,122 @@ export default function JDAnalyzerPage() {
 
   const handleReset = () => {
     dispatch({ type: 'SET_JD_DATA', payload: null });
+    setLlmParsedData(null);
+  };
+
+  const handleParseWithAI = async () => {
+    if (!customJDText.trim() || customJDText.length < 50) {
+      setParseError("JD text too short. Please paste a complete job description.");
+      return;
+    }
+    setParsingLLM(true);
+    setParseError("");
+    try {
+      const res = await fetch("http://localhost:8000/api/parse-jd-llm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jd_text: customJDText }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Merge with expected JD structure
+        const merged: JDData = {
+          ...data,
+          filename: "Custom JD (LLM parsed)",
+          jd_text_length: customJDText.length,
+          title_tiers: [],
+          jd_excerpt: customJDText.slice(0, 400),
+        };
+        setLlmParsedData(merged);
+        dispatch({ type: 'SET_JD_DATA', payload: merged });
+        setShowCustomJD(false);
+      } else {
+        setParseError(data.error || "LLM parsing failed. Try again or use file upload.");
+      }
+    } catch {
+      setParseError("Could not reach backend. Is the server running?");
+    } finally {
+      setParsingLLM(false);
+    }
   };
 
   return (
-    <AnimatePresence mode="wait">
-      {!jdData ? (
-        <motion.div key="upload" exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }}>
-          <UploadModal onAnalyzed={handleAnalyzed} />
-        </motion.div>
-      ) : (
-        <motion.div key="results" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
-          <JDResults data={jdData} onReset={handleReset} />
-        </motion.div>
+    <div>
+      {/* API Mode: Custom JD Paste Panel */}
+      {apiModeEnabled && !jdData && (
+        <div className="max-w-2xl mx-auto px-8 pt-8">
+          <button
+            onClick={() => setShowCustomJD(v => !v)}
+            className="flex items-center gap-2 text-[13px] font-medium text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors mb-2"
+          >
+            <Sparkles className="w-4 h-4" />
+            {showCustomJD ? "Hide" : "Paste a custom job description (API Mode)"}
+            <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showCustomJD ? "rotate-90" : ""}`} />
+          </button>
+
+          <AnimatePresence>
+            {showCustomJD && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="rounded-xl border border-purple-200 dark:border-purple-800/50 bg-purple-50 dark:bg-purple-950/20 p-4 mb-6 space-y-3">
+                  <div className="text-[12px] text-purple-700 dark:text-purple-300">
+                    Paste any job description below. The LLM will extract skills, experience, disqualifiers, and generate semantic queries for any role.
+                  </div>
+                  <textarea
+                    value={customJDText}
+                    onChange={e => setCustomJDText(e.target.value)}
+                    placeholder="Paste the full job description here..."
+                    rows={6}
+                    className="w-full text-[13px] px-3 py-2.5 rounded-lg border border-border bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-purple-500/30 resize-none font-mono"
+                  />
+                  {parseError && (
+                    <p className="text-[12px] text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5" /> {parseError}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleParseWithAI}
+                      disabled={parsingLLM || !customJDText.trim()}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {parsingLLM
+                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Parsing with AI...</>
+                        : <><Sparkles className="w-3.5 h-3.5" /> Parse with AI</>
+                      }
+                    </button>
+                    <span className="text-[11px] text-muted-foreground">~1-2 seconds · negligible cost</span>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       )}
-    </AnimatePresence>
+
+      <AnimatePresence mode="wait">
+        {!jdData ? (
+          <motion.div key="upload" exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }}>
+            <UploadModal onAnalyzed={handleAnalyzed} />
+          </motion.div>
+        ) : (
+          <motion.div key="results" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+            {/* JD Source Badge */}
+            {(jdData as any).llm_parsed && (
+              <div className="max-w-5xl mx-auto px-8 pt-4">
+                <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50">
+                  <Sparkles className="w-3 h-3" /> Custom JD — parsed by {(jdData as any).llm_model || "AI"}
+                </span>
+              </div>
+            )}
+            <JDResults data={jdData} onReset={handleReset} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
