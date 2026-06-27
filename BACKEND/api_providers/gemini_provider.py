@@ -2,7 +2,7 @@
 api_providers/gemini_provider.py
 Google Gemini implementation of BaseProvider.
 Uses google-generativeai SDK.
-Models: gemini-1.5-flash (reasoning/chat), gemini-1.5-pro (JD parsing)
+Models: gemini-2.0-flash (reasoning/chat), gemini-2.0-flash (JD parsing)
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 class GeminiProvider(BaseProvider):
     """Google Gemini LLM provider."""
 
-    DEFAULT_REASONING_MODEL = "gemini-1.5-flash"
-    DEFAULT_JD_MODEL = "gemini-1.5-pro"
-    DEFAULT_CHAT_MODEL = "gemini-1.5-flash"
+    DEFAULT_REASONING_MODEL = "gemini-2.0-flash"
+    DEFAULT_JD_MODEL = "gemini-2.0-flash"
+    DEFAULT_CHAT_MODEL = "gemini-2.0-flash"
 
     def __init__(self, api_key: str, model_config: dict):
         super().__init__(api_key, model_config)

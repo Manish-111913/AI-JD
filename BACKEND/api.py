@@ -66,9 +66,9 @@ _state = {
         "gemini_key_set": bool(os.getenv("GEMINI_API_KEY", "")),
         "openai_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
         "model_config": {
-            "reasoning_model": os.getenv("GEMINI_REASONING_MODEL", "gemini-1.5-flash"),
-            "jd_parse_model": os.getenv("GEMINI_JD_PARSE_MODEL", "gemini-1.5-pro"),
-            "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-1.5-flash"),
+            "reasoning_model": os.getenv("GEMINI_REASONING_MODEL", "gemini-2.0-flash"),
+            "jd_parse_model": os.getenv("GEMINI_JD_PARSE_MODEL", "gemini-2.0-flash"),
+            "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-2.0-flash"),
         },
     },
     "session_tokens": 0,
@@ -1291,7 +1291,7 @@ class ApiSettingsRequest(BaseModel):
     provider: Optional[str] = None
     api_mode_enabled: Optional[bool] = None
     fallback_enabled: Optional[bool] = None
-    model_config: Optional[dict] = None
+    model_cfg: Optional[dict] = None
 
 
 @app.post("/api/api-settings")
@@ -1319,8 +1319,8 @@ async def update_api_settings(body: ApiSettingsRequest):
         s["api_mode_enabled"] = body.api_mode_enabled
     if body.fallback_enabled is not None:
         s["fallback_enabled"] = body.fallback_enabled
-    if body.model_config is not None:
-        s["model_config"].update(body.model_config)
+    if body.model_cfg is not None:
+        s["model_config"].update(body.model_cfg)
     return {"success": True, "settings": await get_api_settings()}
 
 
@@ -1328,7 +1328,7 @@ async def update_api_settings(body: ApiSettingsRequest):
 class ValidateApiRequest(BaseModel):
     provider: str
     api_key: str  # Key passed directly for validation only — not stored
-    model_config: Optional[dict] = None
+    model_cfg: Optional[dict] = None
 
 
 @app.post("/api/api-settings/validate")
@@ -1341,7 +1341,7 @@ async def validate_api_key(body: ValidateApiRequest):
         provider = get_provider(
             provider_name=body.provider,
             api_key=body.api_key,
-            model_config=body.model_config or {},
+            model_config=body.model_cfg or {},
         )
         resp = await provider.validate_connection()
         if resp.success:
