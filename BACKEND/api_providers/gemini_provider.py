@@ -33,7 +33,7 @@ class GeminiProvider(BaseProvider):
 
     DEFAULT_REASONING_MODEL = "gemini-2.0-flash"
     DEFAULT_JD_MODEL = "gemini-2.0-flash"
-    DEFAULT_CHAT_MODEL = "gemini-2.0-flash"
+    DEFAULT_CHAT_MODEL = "gemini-2.0-flash-lite"
 
     def __init__(self, api_key: str, model_config: dict):
         super().__init__(api_key, model_config)

@@ -39,18 +39,68 @@ const CONTEXT_OPTIONS = [
 ];
 
 export default function AIChatPage() {
-  const { state } = useAppContext();
+  const { state, dispatch } = useAppContext();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [contextSize, setContextSize] = useState(100);
   const [sessionTokens, setSessionTokens] = useState(0);
   const [sessionCost, setSessionCost] = useState(0);
+  const [backendApiEnabled, setBackendApiEnabled] = useState<boolean | null>(null); // null = loading
+  const [backendResultsCount, setBackendResultsCount] = useState<number>(-1); // -1 = loading
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const apiModeEnabled = state.apiSettings?.apiModeEnabled;
-  const hasResults = (state.backendResults || []).length > 0;
+  // Always fetch real state from backend on mount — fixes hard-refresh issue
+  useEffect(() => {
+    const init = async () => {
+      try {
+        // Fetch API settings
+        const settingsRes = await fetch(`${API_BASE}/api/api-settings`);
+        if (settingsRes.ok) {
+          const s = await settingsRes.json();
+          setBackendApiEnabled(s.api_mode_enabled);
+          // Sync into store too
+          dispatch({
+            type: "SET_API_SETTINGS",
+            payload: {
+              provider: s.provider,
+              apiModeEnabled: s.api_mode_enabled,
+              fallbackEnabled: s.fallback_enabled,
+              geminiKeySet: s.gemini_key_set,
+              openaiKeySet: s.openai_key_set,
+              modelConfig: s.model_config,
+              sessionTokens: s.session_tokens || 0,
+              sessionCostUsd: s.session_cost_usd || 0,
+            },
+          });
+        } else {
+          setBackendApiEnabled(false);
+        }
+      } catch {
+        setBackendApiEnabled(false);
+      }
+
+      try {
+        // Fetch results to check if they exist
+        const statusRes = await fetch(`${API_BASE}/api/status`);
+        if (statusRes.ok) {
+          const s = await statusRes.json();
+          setBackendResultsCount(s.results_ready || 0);
+        } else {
+          setBackendResultsCount(0);
+        }
+      } catch {
+        setBackendResultsCount(0);
+      }
+    };
+    init();
+  }, [dispatch]);
+
+  // Derive: use backend state if available, fall back to store
+  const apiModeEnabled = backendApiEnabled !== null ? backendApiEnabled : state.apiSettings?.apiModeEnabled;
+  const resultsCount = backendResultsCount >= 0 ? backendResultsCount : (state.backendResults || []).length;
+  const hasResults = resultsCount > 0;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -124,6 +174,18 @@ export default function AIChatPage() {
     await fetch(`${API_BASE}/api/chat/history`, { method: "DELETE" });
     setMessages([]);
   };
+
+  // Loading state — checking backend
+  if (backendApiEnabled === null || backendResultsCount === -1) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-80px)] px-8">
+        <div className="text-center space-y-3">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto" />
+          <p className="text-[13px] text-muted-foreground">Connecting to AI backend...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Not enabled states
   if (!apiModeEnabled) {
@@ -233,7 +295,7 @@ export default function AIChatPage() {
               </div>
               <h2 className="text-[16px] font-semibold text-foreground">Ask about your candidates</h2>
               <p className="text-[13px] text-muted-foreground mt-1">
-                I have access to all {Math.min(contextSize, state.backendResults.length)} ranked candidates. Ask anything.
+                I have access to all {Math.min(contextSize, resultsCount)} ranked candidates. Ask anything.
               </p>
             </div>
 
@@ -366,7 +428,7 @@ export default function AIChatPage() {
         </div>
         <div className="flex items-center justify-between mt-2">
           <p className="text-[11px] text-muted-foreground">
-            Context: {Math.min(contextSize, state.backendResults.length)} candidates loaded
+            Context: {Math.min(contextSize, resultsCount)} candidates loaded
           </p>
           <p className="text-[11px] text-muted-foreground">
             Session: {sessionTokens.toLocaleString()} tokens · ${sessionCost.toFixed(4)}

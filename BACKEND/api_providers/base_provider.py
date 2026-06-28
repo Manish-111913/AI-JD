@@ -144,6 +144,7 @@ class BaseProvider(ABC):
             "gemini-1.5-flash": 0.000075,
             "gemini-1.5-pro": 0.00125,
             "gemini-2.0-flash": 0.0001,
+            "gemini-2.0-flash-lite": 0.000075,
             # OpenAI
             "gpt-4o-mini": 0.000150,
             "gpt-4o": 0.005,

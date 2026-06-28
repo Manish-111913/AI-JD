@@ -61,14 +61,15 @@ _state = {
     # ── API Mode state (never affects Competition Mode) ─────────────────────
     "api_settings": {
         "provider": os.getenv("API_MODE_PROVIDER", "gemini"),
-        "api_mode_enabled": False,   # OFF by default — Competition Mode is default
+        # Auto-enable API mode if a key is detected in the environment
+        "api_mode_enabled": bool(os.getenv("GEMINI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")),
         "fallback_enabled": os.getenv("API_FALLBACK_ENABLED", "true").lower() == "true",
         "gemini_key_set": bool(os.getenv("GEMINI_API_KEY", "")),
         "openai_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
         "model_config": {
             "reasoning_model": os.getenv("GEMINI_REASONING_MODEL", "gemini-2.0-flash"),
             "jd_parse_model": os.getenv("GEMINI_JD_PARSE_MODEL", "gemini-2.0-flash"),
-            "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-2.0-flash"),
+            "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-2.0-flash-lite"),
         },
     },
     "session_tokens": 0,
@@ -1273,9 +1274,9 @@ async def get_api_settings():
         "session_cost_usd": _state.get("session_cost_usd", 0.0),
         "available_models": {
             "gemini": {
-                "reasoning": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
-                "jd_parse": ["gemini-1.5-pro", "gemini-1.5-flash"],
-                "chat": ["gemini-1.5-flash", "gemini-1.5-pro"],
+                "reasoning": ["gemini-2.0-flash", "gemini-2.0-flash-lite"],
+                "jd_parse": ["gemini-2.0-flash", "gemini-2.0-flash-lite"],
+                "chat": ["gemini-2.0-flash-lite", "gemini-2.0-flash"],
             },
             "openai": {
                 "reasoning": ["gpt-4o-mini", "gpt-4o"],
@@ -1292,6 +1293,7 @@ class ApiSettingsRequest(BaseModel):
     api_mode_enabled: Optional[bool] = None
     fallback_enabled: Optional[bool] = None
     model_cfg: Optional[dict] = None
+    model_configuration: Optional[dict] = None  # alias for model_cfg (frontend sends 'model_config')
 
 
 @app.post("/api/api-settings")
@@ -1305,9 +1307,9 @@ async def update_api_settings(body: ApiSettingsRequest):
         # Reset model config to provider defaults
         if body.provider == "gemini":
             s["model_config"] = {
-                "reasoning_model": os.getenv("GEMINI_REASONING_MODEL", "gemini-1.5-flash"),
-                "jd_parse_model": os.getenv("GEMINI_JD_PARSE_MODEL", "gemini-1.5-pro"),
-                "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-1.5-flash"),
+                "reasoning_model": os.getenv("GEMINI_REASONING_MODEL", "gemini-2.0-flash"),
+                "jd_parse_model": os.getenv("GEMINI_JD_PARSE_MODEL", "gemini-2.0-flash"),
+                "chat_model": os.getenv("GEMINI_CHAT_MODEL", "gemini-2.0-flash-lite"),
             }
         else:
             s["model_config"] = {
@@ -1319,8 +1321,10 @@ async def update_api_settings(body: ApiSettingsRequest):
         s["api_mode_enabled"] = body.api_mode_enabled
     if body.fallback_enabled is not None:
         s["fallback_enabled"] = body.fallback_enabled
-    if body.model_cfg is not None:
-        s["model_config"].update(body.model_cfg)
+    # Accept model_cfg or model_configuration (frontend may send 'model_config')
+    cfg_update = body.model_cfg or body.model_configuration
+    if cfg_update is not None:
+        s["model_config"].update(cfg_update)
     return {"success": True, "settings": await get_api_settings()}
 
 
@@ -1446,7 +1450,7 @@ class ChatRequest(BaseModel):
 async def recruiter_chat(body: ChatRequest):
     """
     Answer a recruiter's natural language question about ranked candidates.
-    Only available in API Mode.
+    Tries Gemini LLM first; falls back to local rule engine on any API failure.
     """
     if not body.question or not body.question.strip():
         raise HTTPException(400, "Question cannot be empty.")
@@ -1459,33 +1463,53 @@ async def recruiter_chat(body: ChatRequest):
         }
 
     provider = _get_provider()
-    if not provider:
-        return {
-            "success": False,
-            "answer": "AI Chat requires API Mode to be enabled. Go to API Settings to configure your API key.",
-            "citations": [],
-        }
 
-    from services import ApiEnhancedService
-    svc = ApiEnhancedService(provider=provider)
-    context_size = max(1, min(body.context_size, len(_state["results"])))
-    result = await svc.chat(
+    # ── Try Gemini LLM first ──────────────────────────────────────────────────
+    if provider:
+        try:
+            from services import ApiEnhancedService
+            svc = ApiEnhancedService(provider=provider)
+            context_size = max(1, min(body.context_size, len(_state["results"])))
+            result = await svc.chat(
+                question=body.question,
+                ranked_results=_state["results"],
+                context_size=context_size,
+                conversation_history=_state.get("chat_history", []),
+            )
+
+            if result.get("success"):
+                # Save to conversation history
+                if body.add_to_history:
+                    history = _state.get("chat_history", [])
+                    history.append({"role": "user", "content": body.question})
+                    history.append({"role": "assistant", "content": result.get("answer", "")})
+                    _state["chat_history"] = history[-20:]
+                _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
+                result["session_tokens"] = _state["session_tokens"]
+                result["session_cost_usd"] = _state["session_cost_usd"]
+                return result
+            # LLM returned failure — fall through to local engine
+            logger.warning(f"LLM chat failed, falling back to local engine. Error: {result.get('error')}")
+        except Exception as e:
+            logger.warning(f"LLM chat exception, falling back to local engine: {e}")
+
+    # ── Local rule-based fallback (always works, no quota) ────────────────────
+    logger.info("Using local rule-based chat engine")
+    from local_chat import answer_locally
+    result = answer_locally(
         question=body.question,
         ranked_results=_state["results"],
-        context_size=context_size,
         conversation_history=_state.get("chat_history", []),
     )
 
-    # Save to conversation history
     if body.add_to_history and result.get("success"):
         history = _state.get("chat_history", [])
         history.append({"role": "user", "content": body.question})
         history.append({"role": "assistant", "content": result.get("answer", "")})
-        _state["chat_history"] = history[-20:]  # Keep last 20 messages
+        _state["chat_history"] = history[-20:]
 
-    _add_session_usage(result.get("tokens_used", 0), result.get("cost_usd", 0.0))
-    result["session_tokens"] = _state["session_tokens"]
-    result["session_cost_usd"] = _state["session_cost_usd"]
+    result["session_tokens"] = _state.get("session_tokens", 0)
+    result["session_cost_usd"] = _state.get("session_cost_usd", 0.0)
     return result
 
 
