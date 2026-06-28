@@ -184,6 +184,46 @@ def normalize_candidate(raw: dict) -> dict:
     if isinstance(completeness, float) and completeness <= 1.0:
         completeness = completeness * 100  # normalize to 0-100
 
+    # Format expected salary as a nice string for frontend rendering
+    expected_salary = signals.get("expected_salary_range_inr_lpa", {})
+    if isinstance(expected_salary, dict):
+        min_val = expected_salary.get("min", 0)
+        max_val = expected_salary.get("max", 0)
+        if min_val or max_val:
+            salary_str = f"{min_val} - {max_val} LPA"
+        else:
+            salary_str = "Not specified"
+    else:
+        salary_str = str(expected_salary)
+
+    # Re-normalize completeness to 0.0 - 1.0 for frontend rendering (if it is > 1.0)
+    completeness_frontend = completeness / 100.0 if completeness > 1.0 else completeness
+
+    redrob_signals = {
+        "open_to_work_flag": bool(signals.get("open_to_work_flag", False)),
+        "last_active_date": _safe_date(signals.get("last_active_date"), today),
+        "recruiter_response_rate": float(signals.get("recruiter_response_rate", 0.5)),
+        "avg_response_time_hours": float(signals.get("avg_response_time_hours", 24)),
+        "notice_period_days": int(signals.get("notice_period_days", 60)),
+        "profile_completeness_score": float(completeness_frontend),
+        "github_activity_score": github_score if github_score is not None else -1.0,
+        "interview_completion_rate": float(signals.get("interview_completion_rate", 0.5)),
+        "offer_acceptance_rate": float(offer_rate),
+        "connection_count": int(signals.get("connection_count", 0)),
+        "endorsements_received": int(signals.get("endorsements_received", 0)),
+        "profile_views_received_30d": int(signals.get("profile_views_received_30d", 0)),
+        "saved_by_recruiters_30d": int(signals.get("saved_by_recruiters_30d", 0)),
+        "search_appearance_30d": int(signals.get("search_appearance_30d", 0)),
+        "applications_submitted_30d": int(signals.get("applications_submitted_30d", 0)),
+        "preferred_work_mode": str(signals.get("preferred_work_mode", "flexible")),
+        "willing_to_relocate": bool(signals.get("willing_to_relocate", False)),
+        "expected_salary_range_inr_lpa": salary_str,
+        "verified_email": bool(signals.get("verified_email", False)),
+        "verified_phone": bool(signals.get("verified_phone", False)),
+        "linkedin_connected": bool(signals.get("linkedin_connected", False)),
+        "skill_assessment_scores": assessment_scores,
+    }
+
     return {
         "candidate_id": str(raw.get("candidate_id", "")),
         # Profile fields
@@ -203,7 +243,7 @@ def normalize_candidate(raw: dict) -> dict:
         "education": education,
         "certifications": raw.get("certifications", []) or [],
         "languages": raw.get("languages", []) or [],
-        # Signals
+        # Flat Signals (for Backend Scorer Modules)
         "open_to_work_flag": bool(signals.get("open_to_work_flag", False)),
         "last_active_date": _safe_date(signals.get("last_active_date"), today),
         "recruiter_response_rate": float(signals.get("recruiter_response_rate", 0.5)),
@@ -226,6 +266,8 @@ def normalize_candidate(raw: dict) -> dict:
         "verified_phone": bool(signals.get("verified_phone", False)),
         "linkedin_connected": bool(signals.get("linkedin_connected", False)),
         "skill_assessment_scores": assessment_scores,
+        # Re-inject nested signals dict (for Frontend Views)
+        "redrob_signals": redrob_signals,
     }
 
 

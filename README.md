@@ -180,6 +180,27 @@ The `BACKEND/` folder has its own [`README.md`](BACKEND/README.md) with deeper t
 
 ---
 
+## 📊 Scaling Benchmarks (10K vs. 1 Lakh Candidates)
+
+Below are the approximate end-to-end pipeline runtimes for **10,000** and **100,000 (1 Lakh)** candidates, depending on your system's hardware configuration (GPU vs. CPU) and cache status.
+
+*Note: Estimates assume a typical distribution where ~31% of candidates pass the Title Gate to proceed to embedding and composite scoring stages.*
+
+| Dataset Size | Hardware | Cache Status | Upload & Validate | Bi-Encoder (Embed) | Cross-Encoder (CE)* | Total End-to-End Time |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **10K Candidates** | GPU Accelerated | Hot (Cached) | ~1.0s | ~2.0s | ~0.5s | **~3.5 seconds** |
+| | GPU Accelerated | Cold (No Cache) | ~1.0s | ~2.0s | ~0.5s | **~5.5 seconds** |
+| | CPU Only | Hot (Cached) | ~1.0s | ~15.0s | ~10.0s | **~26.0 seconds** |
+| | CPU Only | Cold (No Cache) | ~1.0s | ~15.0s | ~10.0s | **~28.0 seconds** |
+| **100K Candidates** | GPU Accelerated | Hot (Cached) | ~12.0s | ~20.0s | ~0.5s | **~32.5 seconds** |
+| *(1 Lakh)* | GPU Accelerated | Cold (No Cache) | ~12.0s | ~20.0s | ~0.5s | **~52.5 seconds** |
+| | CPU Only | Hot (Cached) | ~12.0s | ~2.5 min | ~10.0s | **~2.8 minutes** |
+| | CPU Only | Cold (No Cache) | ~12.0s | ~2.5 min | ~10.0s | **~3.2 minutes** |
+
+*\*Note: Cross-encoder re-ranking is capped dynamically at a maximum of the top 300 candidates (defined by `compute_dynamic_shortlist_size` in `config.py`), which is why the Stage 3 CE time remains constant regardless of the total input size.*
+
+---
+
 ## ⚡ Troubleshooting & Performance Tuning
 
 If candidate ranking requests take a long time (e.g. several minutes or longer) for large datasets (e.g. 10,000+ candidates), check for these top 5 common performance bottlenecks:

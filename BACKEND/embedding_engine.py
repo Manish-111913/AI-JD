@@ -75,7 +75,23 @@ def compute_semantic_scores_vectorized(candidate_embeddings: np.ndarray) -> np.n
     normalized to [0,1] by: max(0, (raw - 0.05) / 0.75)
     """
     jd_emb = get_jd_embeddings()  # (3, dim)
-    weights = np.array([q["weight"] for q in JD_QUERIES])  # [0.60, 0.30, 0.10]
+    
+    clean_weights = []
+    for q in JD_QUERIES:
+        w = q.get("weight", 0.0)
+        if isinstance(w, str):
+            w = w.replace("%", "").strip()
+            try:
+                w = float(w) / 100.0 if "%" in q.get("weight", "") else float(w)
+            except ValueError:
+                w = 0.0
+        else:
+            try:
+                w = float(w)
+            except (TypeError, ValueError):
+                w = 0.0
+        clean_weights.append(w)
+    weights = np.array(clean_weights)  # [0.60, 0.30, 0.10]
 
     # Cosine similarity: since embeddings are L2-normalized, dot product = cosine
     # sim_matrix: (N, 3)

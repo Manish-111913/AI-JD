@@ -648,7 +648,26 @@ async def rank_candidates(request: Request, body: RankRequest):
         # Override AI Queries
         if "ai_queries" in body.jd_data:
             import embedding_engine
-            embedding_engine.JD_QUERIES = body.jd_data["ai_queries"]
+            clean_queries = []
+            for q in body.jd_data["ai_queries"]:
+                w = q.get("weight", 0.0)
+                if isinstance(w, str):
+                    w = w.replace("%", "").strip()
+                    try:
+                        w = float(w) / 100.0 if "%" in q.get("weight", "") else float(w)
+                    except ValueError:
+                        w = 0.0
+                else:
+                    try:
+                        w = float(w)
+                    except (TypeError, ValueError):
+                        w = 0.0
+                clean_queries.append({
+                    "text": q.get("text", ""),
+                    "weight": w,
+                    "label": q.get("label", ""),
+                })
+            embedding_engine.JD_QUERIES = clean_queries
             embedding_engine._jd_embeddings = None
         
         # Override CE Query
@@ -751,12 +770,31 @@ async def rank_candidates(request: Request, body: RankRequest):
         await asyncio.sleep(0.05)
 
         candidate_texts = [build_candidate_text(c) for c in tech_candidates]
+        all_embeddings = []
+        n_eligible = len(candidate_texts)
+        embed_log_batch = 2000  # Yield updates every 2,000 sentences (takes ~10-15s on CPU)
 
         try:
             loop = asyncio.get_event_loop()
-            candidate_embeddings = await loop.run_in_executor(
-                None, embed_candidates_batch, candidate_texts
-            )
+            for i in range(0, n_eligible, embed_log_batch):
+                batch_texts = candidate_texts[i : i + embed_log_batch]
+                batch_emb = await loop.run_in_executor(
+                    None, embed_candidates_batch, batch_texts
+                )
+                all_embeddings.append(batch_emb)
+                
+                pct = int((i + len(batch_texts)) / n_eligible * 100)
+                progress_val = 12 + int(((i + len(batch_texts)) / n_eligible) * 10) # range 12 to 22
+                yield _sse_event({
+                    "stage": 2,
+                    "progress": progress_val,
+                    "status": "active",
+                    "message": f"Embedding candidates: {i + len(batch_texts):,}/{n_eligible:,} ({pct}%) complete...",
+                })
+                await asyncio.sleep(0.02)
+
+            candidate_embeddings = np.vstack(all_embeddings)
+
             yield _sse_event({
                 "stage": 2, "progress": 22, "status": "active",
                 "message": "Computing 3-query cosine similarity (Q1x60% + Q2x30% + Q3x10%)...",
@@ -803,8 +841,11 @@ async def rank_candidates(request: Request, body: RankRequest):
         cache = FeatureCache()
         honeypot_results = {}
         flagged_count = 0
+        idx = 0
+        total_tech = len(tech_candidates)
 
         for c in tech_candidates:
+            idx += 1
             cid = c["candidate_id"]
             cached_feat = cache.get(cid)
             if cached_feat and "honeypot_confidence" in cached_feat:
@@ -822,6 +863,16 @@ async def rank_candidates(request: Request, body: RankRequest):
             honeypot_results[cid] = hp
             if hp["honeypot_confidence"] > 0.55:
                 flagged_count += 1
+                
+            if idx % 5000 == 0:
+                progress_val = 31 + int((idx / total_tech) * 8) # range 31 to 39
+                yield _sse_event({
+                    "stage": 3,
+                    "progress": progress_val,
+                    "status": "active",
+                    "message": f"Running honeypot detection: {idx:,}/{total_tech:,} candidates complete...",
+                })
+                await asyncio.sleep(0.01)
 
         yield _sse_event({
             "stage": 3, "progress": 40, "status": "completed",
@@ -842,8 +893,11 @@ async def rank_candidates(request: Request, body: RankRequest):
         features_map = {}
         all_scores = []
         cache_updated = False
+        idx = 0
+        total_tech = len(tech_candidates)
 
         for c in tech_candidates:
+            idx += 1
             cid = c["candidate_id"]
             sem = semantic_scores.get(cid, 0.0)
             feat = cache.get(cid)
@@ -855,6 +909,16 @@ async def rank_candidates(request: Request, body: RankRequest):
                 cache_updated = True
             features_map[cid] = feat
             all_scores.append((cid, feat["first_pass_score"]))
+            
+            if idx % 5000 == 0:
+                progress_val = 41 + int((idx / total_tech) * 16) # range 41 to 57
+                yield _sse_event({
+                    "stage": 4,
+                    "progress": progress_val,
+                    "status": "active",
+                    "message": f"Calculating feature scores: {idx:,}/{total_tech:,} candidates complete...",
+                })
+                await asyncio.sleep(0.01)
 
         if cache_updated:
             cache.save()
