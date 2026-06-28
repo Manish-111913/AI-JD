@@ -180,6 +180,47 @@ The `BACKEND/` folder has its own [`README.md`](BACKEND/README.md) with deeper t
 
 ---
 
+## ⚡ Troubleshooting & Performance Tuning
+
+If candidate ranking requests take a long time (e.g. several minutes or longer) for large datasets (e.g. 10,000+ candidates), check for these top 5 common performance bottlenecks:
+
+### 1️⃣ Lack of Pre-computed Embeddings (Online Embedding Overhead)
+* **The Problem:** Running ranking without pre-computed embeddings forces the backend to run online inference on the CPU/GPU for thousands of profiles.
+* **The Solution:** Use `setup.py` to generate the `.npy` embeddings once off-line.
+  ```bash
+  cd BACKEND
+  python setup.py --candidates <path_to_candidates.jsonl>
+  ```
+  Then, pass the saved embeddings file to the runner:
+  ```bash
+  python rank.py --candidates ./candidates.jsonl --embeddings ./candidate_embeddings.npy --out ./submission.csv
+  ```
+
+### 2️⃣ CPU-Only Execution vs. GPU Acceleration
+* **The Problem:** Standard installation installs the CPU-only version of PyTorch. Running transformers on CPU is 10x-50x slower than on a GPU.
+* **The Solution:** If you have an NVIDIA GPU, install PyTorch with CUDA support:
+  ```bash
+  pip install torch --select-index https://download.pytorch.org/whl/cu121
+  ```
+
+### 3️⃣ CPU Thread Contention (OMP Threading Overhead)
+* **The Problem:** On high-core CPUs, PyTorch automatically spawns too many threads, causing logical cores to waste time context-switching.
+* **The Solution:** Set OpenMP environment variables to limit thread counts before running the script:
+  * **Windows (PowerShell):** `$env:OMP_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1"`
+  * **macOS/Linux:** `export OMP_NUM_THREADS=1; export MKL_NUM_THREADS=1`
+
+### 4️⃣ Low RAM & Swap/Pagefile Thrashing
+* **The Problem:** Loading candidate profiles alongside embedding and cross-encoder models requires at least **1.5 GB to 2.5 GB of free RAM**. If your system or VM runs out of memory, it starts swapping memory pages to the disk, causing a huge performance penalty (up to 100x slowdown).
+* **The Solution:** Ensure your machine or container has at least **4 GB of total RAM** allocated, and close other heavy applications.
+
+### 5️⃣ Offline / Proxy Network Timeouts
+* **The Problem:** By default, Hugging Face `transformers` attempts to contact its server to check for updates every time a model is loaded, leading to 30–60 second connection timeouts if you are offline or behind a strict proxy/firewall.
+* **The Solution:** Force Hugging Face into offline mode using environment variables:
+  * **Windows (PowerShell):** `$env:TRANSFORMERS_OFFLINE="1"; $env:HF_HUB_OFFLINE="1"`
+  * **macOS/Linux:** `export TRANSFORMERS_OFFLINE=1; export HF_HUB_OFFLINE=1`
+
+---
+
 ## Built With
 
 - **Sentence Transformers** (`all-MiniLM-L6-v2`) — semantic candidate search

@@ -94,6 +94,34 @@ from embedding_engine import (
 from cross_encoder_reranker import rerank_with_cross_encoder, is_ce_available
 from career_analyzer import compute_title_relevance_score
 from reasoning_generator import build_reasoning
+# ── Startup Event: Warm Up ML Models ──────────────────────────────────────────
+@app.on_event("startup")
+async def startup_event():
+    """Download and pre-load bi-encoder and cross-encoder models to memory on startup."""
+    logger.info("======================================================================")
+    logger.info("Backend Startup: Pre-loading ML models to avoid cold starts...")
+    logger.info("======================================================================")
+    
+    # Pre-load Bi-Encoder Model
+    try:
+        from embedding_engine import _get_model
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _get_model)
+    except Exception as e:
+        logger.error(f"Failed to pre-load Bi-Encoder model at startup: {e}")
+
+    # Pre-load Cross-Encoder Model
+    try:
+        from cross_encoder_reranker import _get_ce_model
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _get_ce_model)
+        _state["model_loaded"] = is_ce_available()
+    except Exception as e:
+        logger.error(f"Failed to pre-load Cross-Encoder model at startup: {e}")
+    
+    logger.info("======================================================================")
+    logger.info("Backend Startup: ML models initialization finished.")
+    logger.info("======================================================================")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
