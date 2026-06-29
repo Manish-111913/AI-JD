@@ -13,6 +13,7 @@ export interface Candidate {
     proficiency: 'beginner' | 'intermediate' | 'advanced' | 'expert';
     duration_months: number;
     endorsement_count: number;
+    endorsements?: number;
     assessment_score?: number;
   }>;
   career_history: Array<{
@@ -34,6 +35,7 @@ export interface Candidate {
     end_year: number;
     grade: string;
     institution_tier: 'tier_1' | 'tier_2' | 'tier_3' | 'tier_4' | 'unknown';
+    tier?: string;
   }>;
   redrob_signals: {
     open_to_work_flag: boolean;

@@ -7,6 +7,7 @@ import {
   ChevronDown, Trash2, ExternalLink, Coins, AlertTriangle,
 } from "lucide-react";
 import { useAppContext } from "@/store/appStore";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 
 const API_BASE = "http://localhost:8000";
@@ -54,31 +55,30 @@ export default function AIChatPage() {
   // Always fetch real state from backend on mount — fixes hard-refresh issue
   useEffect(() => {
     const init = async () => {
+      const startTime = Date.now();
+      let apiEnabled = false;
+      let resultsCount = 0;
+      let settingsPayload: any = null;
+
       try {
         // Fetch API settings
         const settingsRes = await fetch(`${API_BASE}/api/api-settings`);
         if (settingsRes.ok) {
           const s = await settingsRes.json();
-          setBackendApiEnabled(s.api_mode_enabled);
-          // Sync into store too
-          dispatch({
-            type: "SET_API_SETTINGS",
-            payload: {
-              provider: s.provider,
-              apiModeEnabled: s.api_mode_enabled,
-              fallbackEnabled: s.fallback_enabled,
-              geminiKeySet: s.gemini_key_set,
-              openaiKeySet: s.openai_key_set,
-              modelConfig: s.model_config,
-              sessionTokens: s.session_tokens || 0,
-              sessionCostUsd: s.session_cost_usd || 0,
-            },
-          });
-        } else {
-          setBackendApiEnabled(false);
+          apiEnabled = s.api_mode_enabled;
+          settingsPayload = {
+            provider: s.provider,
+            apiModeEnabled: s.api_mode_enabled,
+            fallbackEnabled: s.fallback_enabled,
+            geminiKeySet: s.gemini_key_set,
+            openaiKeySet: s.openai_key_set,
+            modelConfig: s.model_config,
+            sessionTokens: s.session_tokens || 0,
+            sessionCostUsd: s.session_cost_usd || 0,
+          };
         }
       } catch {
-        setBackendApiEnabled(false);
+        apiEnabled = false;
       }
 
       try {
@@ -86,13 +86,27 @@ export default function AIChatPage() {
         const statusRes = await fetch(`${API_BASE}/api/status`);
         if (statusRes.ok) {
           const s = await statusRes.json();
-          setBackendResultsCount(s.results_ready || 0);
+          resultsCount = s.results_ready || 0;
         } else {
-          setBackendResultsCount(0);
+          resultsCount = 0;
         }
       } catch {
-        setBackendResultsCount(0);
+        resultsCount = 0;
       }
+
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+
+      setTimeout(() => {
+        setBackendApiEnabled(apiEnabled);
+        setBackendResultsCount(resultsCount);
+        if (settingsPayload) {
+          dispatch({
+            type: "SET_API_SETTINGS",
+            payload: settingsPayload,
+          });
+        }
+      }, delay);
     };
     init();
   }, [dispatch]);
@@ -124,6 +138,8 @@ export default function AIChatPage() {
     setInput("");
     setSending(true);
 
+    const startTime = Date.now();
+
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
@@ -146,20 +162,37 @@ export default function AIChatPage() {
         timestamp: new Date(),
         error: !data.success,
       };
-      setMessages(prev => [...prev, assistantMsg]);
-      if (data.session_tokens) setSessionTokens(data.session_tokens);
-      if (data.session_cost_usd) setSessionCost(data.session_cost_usd);
+
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+
+      setTimeout(() => {
+        setMessages(prev => [...prev, assistantMsg]);
+        if (data.session_tokens) setSessionTokens(data.session_tokens);
+        if (data.session_cost_usd) setSessionCost(data.session_cost_usd);
+        setSending(false);
+      }, delay);
+
     } catch (e) {
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "Could not reach the backend. Is the server running?",
-        timestamp: new Date(),
-        error: true,
-      }]);
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: "Could not reach the backend. Is the server running?",
+          timestamp: new Date(),
+          error: true,
+        }]);
+        setSending(false);
+      }, delay);
     } finally {
-      setSending(false);
-      inputRef.current?.focus();
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, delay + 50);
     }
   }, [sending, contextSize]);
 
@@ -178,10 +211,69 @@ export default function AIChatPage() {
   // Loading state — checking backend
   if (backendApiEnabled === null || backendResultsCount === -1) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-80px)] px-8">
-        <div className="text-center space-y-3">
-          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto" />
-          <p className="text-[13px] text-muted-foreground">Connecting to AI backend...</p>
+      <div className="flex flex-col h-[calc(100vh-0px)] bg-background">
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-background flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <Skeleton className="w-8 h-8 rounded-lg" />
+            <div className="space-y-1">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-3 w-36" />
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-7 w-48 rounded-lg" />
+            <Skeleton className="h-7 w-36 rounded-lg" />
+            <Skeleton className="h-7 w-20 rounded-lg" />
+          </div>
+        </div>
+
+        {/* Chat area skeleton */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-4xl mx-auto w-full">
+          {/* Chat bubbles skeletons (alternating) */}
+          <div className="flex justify-start gap-3">
+            <Skeleton className="w-8 h-8 rounded-full flex-shrink-0" />
+            <div className="space-y-2 max-w-md w-full">
+              <Skeleton className="h-4 w-1/3" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <div className="space-y-2 max-w-md w-full flex flex-col items-end">
+              <Skeleton className="h-4 w-1/4" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-4/5" />
+            </div>
+            <Skeleton className="w-8 h-8 rounded-full flex-shrink-0" />
+          </div>
+
+          <div className="flex justify-start gap-3">
+            <Skeleton className="w-8 h-8 rounded-full flex-shrink-0" />
+            <div className="space-y-2 max-w-md w-full">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <div className="space-y-2 max-w-md w-full flex flex-col items-end">
+              <Skeleton className="h-4 w-1/5" />
+              <Skeleton className="h-4 w-full" />
+            </div>
+            <Skeleton className="w-8 h-8 rounded-full flex-shrink-0" />
+          </div>
+        </div>
+
+        {/* Input area skeleton */}
+        <div className="px-6 py-4 border-t border-border bg-background flex-shrink-0">
+          <div className="flex items-end gap-2 max-w-4xl mx-auto w-full">
+            <Skeleton className="h-10 flex-1 rounded-lg" />
+            <Skeleton className="h-10 w-24 rounded-lg" />
+          </div>
         </div>
       </div>
     );
@@ -385,11 +477,17 @@ export default function AIChatPage() {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex justify-start"
+            className="flex justify-start gap-3 w-full"
           >
-            <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-card border border-border flex items-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
-              <span className="text-[13px] text-muted-foreground">Thinking...</span>
+            <Skeleton className="w-8 h-8 rounded-full flex-shrink-0" />
+            <div className="space-y-2 max-w-sm w-full">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[12px] font-semibold text-foreground">Recruiter AI</span>
+                <span className="text-[10px] text-muted-foreground animate-pulse">thinking...</span>
+              </div>
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-2/3" />
             </div>
           </motion.div>
         )}

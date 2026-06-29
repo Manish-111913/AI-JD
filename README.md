@@ -249,6 +249,23 @@ When precomputation is enabled, the 14-minute online embedding phase is replaced
 | CSV Export | < 1 second |
 | **Total End-to-End Execution** | **~35 – 60 seconds** |
 
+### 🌐 Web UI Upload Caching & Cloning Behavior
+
+The FastAPI backend ([api.py](file:///d:/HACK2SKILL/BACKEND/api.py)) is equipped with a hybrid embedding caching layer. When a candidate batch is uploaded via the Web UI and ranked, the server checks if `candidate_embeddings.npy` and `candidate_embeddings.ids.json` exist.
+
+* **Cache Hits**: Any candidate matching a precomputed ID has their embedding retrieved instantly.
+* **Online Fallback**: Any new or custom candidates are dynamically embedded online on-the-fly and combined with the cached vectors.
+* **New JDs**: The system compares the loaded embeddings against the newly uploaded Job Description queries in under a second, ensuring correct matching even when the JD changes.
+
+#### 👥 Cloning the Repository: Will it run fast for a new user?
+Yes! The large precomputed binary files (`candidate_embeddings.npy` and `features_cache.pkl`) are tracked using **Git LFS (Large File Storage)** in this repository:
+1. **With Git LFS**: When a new user clones this repository with Git LFS installed, the precomputed embedding files will be downloaded automatically. The ranking pipeline will work **instantly (under a minute)** on their first run.
+2. **Without Git LFS**: If the user clones without Git LFS (or gets a cold cache), they must run the offline setup script once in their local folder:
+   ```powershell
+   python BACKEND/setup.py --candidates "./[PUB] India_runs_data_and_ai_challenge/India_runs_data_and_ai_challenge/candidates.jsonl" --embeddings-out BACKEND/candidate_embeddings.npy
+   ```
+   This will generate the local caches, enabling sub-minute UI rankings instantly.
+
 ---
 
 ## ⚡ Troubleshooting & Performance Tuning

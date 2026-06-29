@@ -78,6 +78,7 @@ export interface BackendResult {
     proficiency: string;
     duration_months: number;
     endorsement_count: number;
+    endorsements?: number;
     assessment_score?: number;
   }>;
   career_history?: Array<{
@@ -99,6 +100,7 @@ export interface BackendResult {
     end_year: number;
     grade?: string;
     institution_tier?: string;
+    tier?: string;
   }>;
   redrob_signals?: {
     open_to_work_flag: boolean;
@@ -152,6 +154,7 @@ export interface AppState {
   theme: Theme;
   pipelineRuntime?: number;
   totalCandidatesProcessed?: number;
+  honeypotsFlagged?: number;
   // JD data from upload-jd endpoint
   jdData: JDData | null;
   // API Mode settings
@@ -162,7 +165,7 @@ type Action =
   | { type: 'SET_STATUS'; payload: AppStatus }
   | { type: 'LOAD_DATA'; payload: RankedCandidate[] }
   | { type: 'SET_RESULTS'; payload: RankedCandidate[] }
-  | { type: 'SET_BACKEND_RESULTS'; payload: BackendResult[] }
+  | { type: 'SET_BACKEND_RESULTS'; payload: BackendResult[]; honeypotsFlagged?: number }
   | { type: 'SET_UPLOADED_COUNT'; payload: { count: number; preview: CandidatePreviewItem[] } }
   | { type: 'SELECT_CANDIDATE'; payload: RankedCandidate | null }
   | { type: 'SELECT_BACKEND_CANDIDATE'; payload: BackendResult | null }
@@ -225,7 +228,11 @@ const appReducer = (state: AppState, action: Action): AppState => {
     case 'SET_RESULTS':
       return { ...state, rankingResults: action.payload };
     case 'SET_BACKEND_RESULTS':
-      return { ...state, backendResults: action.payload };
+      return { 
+        ...state, 
+        backendResults: action.payload,
+        honeypotsFlagged: action.honeypotsFlagged ?? state.honeypotsFlagged
+      };
     case 'SET_UPLOADED_COUNT':
       return { ...state, uploadedCount: action.payload.count, uploadedPreview: action.payload.preview };
     case 'SELECT_CANDIDATE':

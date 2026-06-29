@@ -129,6 +129,29 @@ def normalize_candidate(raw: dict) -> dict:
             else:
                 end_dt = today
 
+        # Classify company type for frontend rendering
+        company_lower = str(role.get("company", "")).lower()
+        industry_lower = str(role.get("industry", "")).lower()
+        size_str = str(role.get("company_size", ""))
+        
+        company_type = "startup"
+        if any(firm in company_lower for firm in ["mckinsey", "boston consulting", "bain", "accenture", "deloitte", "ey", "pwc", "kpmg", "tata consultancy", "tcs", "infosys", "wipro", "cognizant", "capgemini", "hcl", "tech mahindra", "services", "solutions", "consulting", "systems", "technology services"]):
+            company_type = "consulting"
+        elif any(research in company_lower or research in industry_lower for research in ["research", "lab", "institute", "university", "academy", "science"]):
+            company_type = "research"
+        elif any(prod in company_lower for prod in ["google", "microsoft", "amazon", "apple", "meta", "netflix", "uber", "airbnb", "spotify", "stripe", "salesforce", "adobe", "oracle", "sap"]):
+            company_type = "product"
+        elif any(d in industry_lower for d in ["fintech", "edtech", "healthtech", "insurtech", "proptech", "saas", "software", "tech", "ai", "ml"]):
+            if size_str in ["1-10", "11-50", "51-200"]:
+                company_type = "startup"
+            else:
+                company_type = "product"
+        else:
+            if size_str in ["501-1000", "1001-5000", "5001-10000", "10001+"]:
+                company_type = "product"
+            else:
+                company_type = "startup"
+
         career_history.append({
             "company": str(role.get("company", "")),
             "title": str(role.get("title", "")),
@@ -139,6 +162,7 @@ def normalize_candidate(raw: dict) -> dict:
             "industry": str(role.get("industry", "")),
             "company_size": str(role.get("company_size", "unknown")),
             "description": str(role.get("description", "")),
+            "company_type": company_type,
         })
 
     # Sort by start_date descending (latest first)

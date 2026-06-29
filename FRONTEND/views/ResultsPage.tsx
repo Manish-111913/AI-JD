@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useAppContext, BackendResult } from "@/store/appStore";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -38,17 +39,23 @@ function isAvailable(r: BackendResult) {
 }
 
 function profColor(p: string) {
-  if (p === "expert") return "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300";
-  if (p === "advanced") return "bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300";
-  if (p === "intermediate") return "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300";
-  return "bg-muted text-muted-foreground";
+  if (p === "expert") return "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200/40 dark:border-emerald-800/30";
+  if (p === "advanced") return "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-200/40 dark:border-blue-800/30";
+  if (p === "intermediate") return "bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 border border-amber-200/40 dark:border-amber-800/30";
+  return "bg-muted text-muted-foreground border border-border";
+}
+
+function trustColor(t: number) {
+  if (t >= 0.8) return "text-emerald-600 dark:text-emerald-400 font-bold";
+  if (t >= 0.5) return "text-purple-600 dark:text-purple-400 font-bold";
+  return "text-amber-600 dark:text-amber-500 font-bold";
 }
 
 function companyBadge(type: string) {
   const m: Record<string, string> = {
-    product: "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800",
-    consulting: "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800",
-    research: "bg-ai/10 text-ai border-ai/20",
+    product: "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-900/50",
+    consulting: "bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-900/50",
+    research: "bg-purple-50 dark:bg-purple-950/20 text-purple-600 dark:text-purple-400 border-purple-100 dark:border-purple-900/50",
     startup: "bg-muted text-foreground border-border",
   };
   return m[type] || "bg-muted text-muted-foreground border-border";
@@ -271,6 +278,9 @@ function CandidatePanel({ candidate, onClose, executionMode, jdSkills }: {
     return typeof v === "number" ? v : 0;
   };
 
+  const ceRaw = candidate.ce_score || getFeatureVal("ce_score") || 0;
+  const ceDisplay = ceRaw <= 1 ? Math.round(ceRaw * 100) : Math.round(ceRaw);
+
   // Check if candidate skill matches a JD skill
   const isJDSkill = (skillName: string) => {
     return jdSkills.some(js => skillName.toLowerCase().includes(js.toLowerCase()) || js.toLowerCase().includes(skillName.toLowerCase()));
@@ -392,13 +402,13 @@ function CandidatePanel({ candidate, onClose, executionMode, jdSkills }: {
                     <Cpu className="w-3.5 h-3.5 text-ai" />
                     <span className="text-[12px] font-semibold text-foreground">Cross-Encoder Score</span>
                     <span className="ml-auto text-[20px] font-bold font-mono text-ai">
-                      {Math.round((candidate.ce_score || getFeatureVal("ce_score") || 0) * 100)}
+                      {ceDisplay}
                     </span>
                   </div>
                   <div className="h-2 bg-muted rounded-full overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
-                      animate={{ width: `${(candidate.ce_score || getFeatureVal("ce_score") || 0) * 100}%` }}
+                      animate={{ width: `${ceDisplay}%` }}
                       transition={{ duration: 0.6 }}
                       className="h-full bg-ai rounded-full"
                     />
@@ -457,67 +467,96 @@ function CandidatePanel({ candidate, onClose, executionMode, jdSkills }: {
 
             {/* SKILLS */}
             {tab === "skills" && (
-              <div className="space-y-2">
-                {(candidate.skills || []).length === 0 && (
+              <div className="space-y-4">
+                <p className="text-[12px] text-muted-foreground">Sorted by JD match then trust score.</p>
+                {(candidate.skills || []).length === 0 ? (
                   <p className="text-[13px] text-muted-foreground">No skill data available.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[12px] text-left">
+                      <thead>
+                        <tr className="border-b border-border">
+                          {["SKILL", "PROFICIENCY", "MONTHS", "ENDORSEMENTS", "TRUST", "JD MATCH"].map(h => (
+                            <th key={h} className="pb-3 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80 pr-4">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(candidate.skills || []).map((sk, i) => {
+                          const matchesJD = isJDSkill(sk.name);
+                          const duration = sk.duration_months || 0;
+                          const endorsements = sk.endorsements ?? sk.endorsement_count ?? 0;
+                          const trust = Math.min(1, (sk.proficiency === "expert" ? 0.9 : sk.proficiency === "advanced" ? 0.7 : 0.45) *
+                            (1 / (1 + Math.exp(-(duration / 12 - 1)))) *
+                            Math.log(endorsements + 2) / Math.log(10));
+                          return (
+                            <tr key={i} className="border-b border-border/40 hover:bg-muted/10 transition-colors">
+                              <td className="py-3 pr-4 font-semibold text-foreground text-[12.5px]">{sk.name}</td>
+                              <td className="py-3 pr-4">
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${profColor(sk.proficiency)}`}>{sk.proficiency}</span>
+                              </td>
+                              <td className="py-3 pr-4 font-mono text-muted-foreground">{duration}m</td>
+                              <td className="py-3 pr-4 font-mono text-muted-foreground">{endorsements}</td>
+                              <td className="py-3 pr-4">
+                                <span className={`font-mono ${trustColor(trust)}`}>{trust.toFixed(2)}</span>
+                              </td>
+                              <td className="py-3 pr-4 text-muted-foreground text-[11px]">
+                                {matchesJD ? (
+                                  <span className="text-gray-500 font-medium">
+                                    {["Embeddings", "Vector DB", "Retrieval", "LLMs", "Evaluation", "Python"].find(cat =>
+                                      sk.name.toLowerCase().includes(cat.toLowerCase().split(" ")[0])
+                                    ) || "Yes"}
+                                  </span>
+                                ) : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
-                {(candidate.skills || []).map((sk, i) => {
-                  const matchesJD = isJDSkill(sk.name);
-                  return (
-                    <div key={i} className={`flex items-center gap-3 py-2 border-b border-border/50 last:border-0 ${matchesJD ? "bg-emerald-50/40 dark:bg-emerald-950/10 -mx-2 px-2 rounded-lg" : ""}`}>
-                      {matchesJD && <Star className="w-3 h-3 text-ai flex-shrink-0" />}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[13px] font-medium text-foreground">{sk.name}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${profColor(sk.proficiency)}`}>
-                            {sk.proficiency}
-                          </span>
-                          {matchesJD && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ai/10 text-ai border border-ai/20 font-medium">
-                              JD Match
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">
-                          {Math.round(sk.duration_months / 12 * 10) / 10} yrs · {sk.endorsement_count} endorsements
-                          {sk.assessment_score != null && ` · Assessment: ${(sk.assessment_score * 100).toFixed(0)}%`}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
             )}
 
             {/* CAREER */}
             {tab === "career" && (
-              <div className="space-y-4">
-                {(candidate.career_history || []).length === 0 && (
+              <div className="relative pl-2 space-y-0">
+                {(candidate.career_history || []).length === 0 ? (
                   <p className="text-[13px] text-muted-foreground">No career data available.</p>
-                )}
-                {(candidate.career_history || []).map((job, i) => (
-                  <div key={i} className="rounded-lg border border-border p-3">
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <div className="text-[13px] font-semibold text-foreground">{job.title}</div>
-                        <div className="text-[12px] text-muted-foreground flex items-center gap-2">
-                          {job.company}
+                ) : (
+                  <>
+                    {/* Timeline line */}
+                    <div className="absolute left-[12px] top-3 bottom-3 w-[1.5px] bg-muted-foreground/15 -translate-x-[50%]" />
+                    
+                    {(candidate.career_history || []).map((job, i) => (
+                      <div key={i} className="relative pl-6 pb-6 last:pb-1 group">
+                        {/* Timeline dot */}
+                        <div className="absolute left-[12px] top-[10px] w-2.5 h-2.5 rounded-full bg-muted-foreground/40 border border-background -translate-x-[50%] transition-transform group-hover:scale-110" />
+                        
+                        <div className="flex items-center gap-2 mb-1.5">
                           {job.company_type && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${companyBadge(job.company_type)}`}>
-                              {job.company_type}
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${companyBadge(job.company_type)}`}>
+                              {job.company_type.charAt(0).toUpperCase() + job.company_type.slice(1)}
                             </span>
                           )}
+                          <span className="text-[11px] text-muted-foreground">{job.duration_months}m</span>
+                          {i === 0 && <span className="text-[11px] text-muted-foreground/80 font-mono">Current × 2.5</span>}
                         </div>
+                        
+                        <h3 className="text-[13px] font-bold text-foreground mt-0.5">{job.title}</h3>
+                        <div className="text-[11px] text-muted-foreground/85 font-medium">{job.company} · {job.industry}</div>
+                        <p className="text-[11.5px] text-muted-foreground/95 mt-1.5 leading-relaxed">{job.description || ""}</p>
+                        
+                        {job.description && (job.description.toLowerCase().includes("deploy") || job.description.toLowerCase().includes("production") || job.description.toLowerCase().includes("build")) && (
+                          <div className="inline-flex items-center gap-1 mt-2 text-[10.5px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/50 dark:bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-900/20">
+                            <span>✓ Production Evidence Found</span>
+                          </div>
+                        )}
                       </div>
-                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                        {Math.round(job.duration_months / 12 * 10) / 10} yrs
-                      </span>
-                    </div>
-                    {job.description && (
-                      <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-3">{job.description}</p>
-                    )}
-                  </div>
-                ))}
+                    ))}
+                  </>
+                )}
               </div>
             )}
 
@@ -681,11 +720,12 @@ export default function ResultsPage() {
   useEffect(() => {
     if (allResults.length === 0) {
       setIsLoading(true);
+      const startTime = Date.now();
       fetch(`${API_BASE}/api/results`)
         .then(r => r.json())
         .then(data => {
           if (data.results?.length > 0) {
-            dispatch({ type: "SET_BACKEND_RESULTS", payload: data.results });
+            dispatch({ type: "SET_BACKEND_RESULTS", payload: data.results, honeypotsFlagged: data.honeypots_flagged });
           } else {
             dispatch({ type: "SET_STATUS", payload: "done" });
           }
@@ -693,7 +733,11 @@ export default function ResultsPage() {
         .catch(() => {
           dispatch({ type: "SET_STATUS", payload: "done" });
         })
-        .finally(() => setIsLoading(false));
+        .finally(() => {
+          const elapsed = Date.now() - startTime;
+          const delay = Math.max(1500 - elapsed, 0);
+          setTimeout(() => setIsLoading(false), delay);
+        });
     }
   }, []);
 
@@ -748,7 +792,9 @@ export default function ResultsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const honeypots = allResults.filter(c => (c.honeypot_confidence || 0) > 0.55).length;
+  const honeypots = ctx.state.honeypotsFlagged !== undefined
+    ? ctx.state.honeypotsFlagged
+    : allResults.filter(c => (c.honeypot_confidence || 0) > 0.55).length;
   const avgDelta = allResults.length > 0
     ? allResults.reduce((sum, c) => sum + (c.rank_delta || 0), 0) / allResults.length
     : 0;
@@ -786,10 +832,68 @@ export default function ResultsPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[60vh]">
-        <div className="text-center space-y-3">
-          <div className="w-8 h-8 border-2 border-foreground/20 border-t-foreground rounded-full animate-spin mx-auto" />
-          <p className="text-[13px] text-muted-foreground">Loading ranking results…</p>
+      <div className="flex flex-col h-screen overflow-hidden bg-background">
+        {/* Summary bar skeleton */}
+        <div className="px-8 py-4 border-b border-border flex items-center justify-between flex-wrap gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-3.5 w-64" />
+          </div>
+          <div className="flex items-center gap-5">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex flex-col gap-1.5">
+                <Skeleton className="h-4 w-12" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+            ))}
+          </div>
+          <div className="ml-auto">
+            <Skeleton className="h-9 w-28 rounded-lg" />
+          </div>
+        </div>
+
+        {/* Filters skeleton */}
+        <div className="px-8 py-3 border-b border-border flex items-center gap-3">
+          <Skeleton className="h-9 w-64 rounded-lg" />
+          <Skeleton className="h-9 w-32 rounded-lg" />
+          <Skeleton className="h-9 w-24 rounded-lg" />
+          <Skeleton className="h-4 w-36 ml-auto" />
+        </div>
+
+        {/* Table skeleton */}
+        <div className="flex-1 overflow-auto px-8 py-4">
+          <div className="border border-border rounded-xl overflow-hidden bg-card">
+            <div className="divide-y divide-border">
+              {/* Header skeleton */}
+              <div className="flex items-center px-4 py-3 bg-muted/40 gap-4">
+                <Skeleton className="h-4 w-8" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 flex-1" />
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-16" />
+              </div>
+              {/* Rows skeleton */}
+              {Array.from({ length: 10 }).map((_, i) => (
+                <div key={i} className="flex items-center px-4 py-4 gap-4">
+                  <Skeleton className="h-4 w-8" />
+                  <Skeleton className="h-4 w-20" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-64" />
+                  </div>
+                  <div className="w-48 flex gap-1.5">
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                    <Skeleton className="h-5 w-14 rounded-full" />
+                    <Skeleton className="h-5 w-12 rounded-full" />
+                  </div>
+                  <Skeleton className="h-5 w-24 rounded-full" />
+                  <Skeleton className="h-5 w-12" />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -982,7 +1086,8 @@ export default function ResultsPage() {
                     { label: "Δ Rank", w: "64px" },
                     { label: "Candidate", w: "auto" },
                     { label: "YoE", w: "48px" },
-                    { label: "Location", w: "110px" },
+                    { label: "Location", w: "120px" },
+                    { label: "Honeypot", w: "80px" },
                     { label: "Avail", w: "48px" },
                   ].map(col => (
                     <th key={col.label} className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground" style={{ width: col.w }}>
@@ -1039,12 +1144,12 @@ export default function ResultsPage() {
                           <span className="flex items-center gap-0.5 text-red-500 font-semibold"><TrendingDown className="w-3 h-3" />{delta}</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 max-w-[200px]">
-                        <div className="font-medium text-foreground truncate flex items-center gap-1.5">
+                      <td className="px-3 py-2.5" style={{ maxWidth: selectedCandidate ? "180px" : "350px" }}>
+                        <div className="font-medium text-foreground truncate flex items-center gap-1.5" title={c.current_title}>
                           {isHoneypot && <Shield className="w-3 h-3 text-amber-500 flex-shrink-0" />}
                           {c.current_title}
                         </div>
-                        <div className="text-muted-foreground truncate text-[11px]">{c.current_company}</div>
+                        <div className="text-muted-foreground truncate text-[11px]" title={c.current_company}>{c.current_company}</div>
                       </td>
                       <td className="px-3 py-2.5">
                         <span className={`font-mono font-semibold ${
@@ -1056,7 +1161,24 @@ export default function ResultsPage() {
                         </span>
                       </td>
                       <td className="px-3 py-2.5">
-                        <span className="text-muted-foreground truncate block max-w-[106px] text-[11px]">{c.location}</span>
+                        <span 
+                          className="text-muted-foreground truncate block text-[11px]"
+                          style={{ maxWidth: selectedCandidate ? "100px" : "200px" }}
+                          title={c.location}
+                        >
+                          {c.location}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] font-mono font-bold text-[11px] ${
+                          (c.honeypot_confidence || 0) > 0.55
+                            ? "bg-red-500/10 text-red-500 border border-red-500/20"
+                            : (c.honeypot_confidence || 0) > 0.30
+                            ? "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/10"
+                        }`}>
+                          {Math.round((c.honeypot_confidence || 0) * 100)}%
+                        </span>
                       </td>
                       <td className="px-3 py-2.5">
                         <span className={`inline-block w-2 h-2 rounded-full ${getAvail(c)}`} />

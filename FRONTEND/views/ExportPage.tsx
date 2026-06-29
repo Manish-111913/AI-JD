@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { Download, CheckCircle2, XCircle, ExternalLink, FileText, Github, Sparkles, Loader2, Coins } from "lucide-react";
 import { useAppContext } from "@/store/appStore";
+import { Skeleton } from "@/components/ui/skeleton";
 import { RankedCandidate } from "@/data/mockData";
 import { validateSubmission, exportToCsv } from "@/utils/csvExport";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,7 @@ export default function ExportPage() {
   const handleGenerateBrief = async () => {
     setBriefLoading(true);
     setBriefError("");
+    const startTime = Date.now();
     try {
       const res = await fetch("http://localhost:8000/api/executive-summary", {
         method: "POST",
@@ -58,19 +60,27 @@ export default function ExportPage() {
         body: JSON.stringify({ role_title: "Senior AI Engineer", top_n: 20 }),
       });
       const data = await res.json();
-      if (data.success) {
-        setBriefText(data.summary || "");
-        setBriefThemes(data.key_themes || []);
-        setBriefInterviews(data.recommended_interviews || []);
-        if (data.session_tokens) setSessionTokens(data.session_tokens);
-        if (data.session_cost_usd) setSessionCost(data.session_cost_usd);
-      } else {
-        setBriefError(data.error || "Failed to generate brief.");
-      }
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+      setTimeout(() => {
+        if (data.success) {
+          setBriefText(data.summary || "");
+          setBriefThemes(data.key_themes || []);
+          setBriefInterviews(data.recommended_interviews || []);
+          if (data.session_tokens) setSessionTokens(data.session_tokens);
+          if (data.session_cost_usd) setSessionCost(data.session_cost_usd);
+        } else {
+          setBriefError(data.error || "Failed to generate brief.");
+        }
+        setBriefLoading(false);
+      }, delay);
     } catch {
-      setBriefError("Could not reach backend.");
-    } finally {
-      setBriefLoading(false);
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+      setTimeout(() => {
+        setBriefError("Could not reach backend.");
+        setBriefLoading(false);
+      }, delay);
     }
   };
 
@@ -227,7 +237,37 @@ export default function ExportPage() {
             </div>
           )}
 
-          {briefText && (
+          {briefLoading && (
+            <div className="space-y-4 animate-pulse">
+              <div className="rounded-lg border border-border bg-background p-4 space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-11/12" />
+                <Skeleton className="h-4 w-5/6" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-4/5" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+              <div className="space-y-2">
+                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">KEY THEMES</div>
+                <div className="flex gap-2">
+                  <Skeleton className="h-6 w-20 rounded-full" />
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                  <Skeleton className="h-6 w-16 rounded-full" />
+                  <Skeleton className="h-6 w-28 rounded-full" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">RECOMMENDED INTERVIEWS</div>
+                <div className="flex gap-2">
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!briefLoading && briefText && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

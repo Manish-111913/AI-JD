@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useAppContext } from "@/store/appStore";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { motion, AnimatePresence } from "framer-motion";
 import type { CandidatePreviewItem } from "@/types/candidateUpload";
 
@@ -138,6 +139,8 @@ export default function InputPage() {
       setDetectedFormat(format);
       dispatch({ type: "SET_STATUS", payload: "loading" });
 
+      const startTime = Date.now();
+
       try {
         const form = new FormData();
         form.append("file", file);
@@ -157,31 +160,41 @@ export default function InputPage() {
           throw new Error(data.error || "Upload failed");
         }
 
-        // Store count + preview in state
-        dispatch({
-          type: "SET_UPLOADED_COUNT",
-          payload: { count: data.count, preview: data.preview || [] },
-        });
-        dispatch({ type: "SET_STATUS", payload: "idle" });
+        const elapsed = Date.now() - startTime;
+        const delay = Math.max(1500 - elapsed, 0);
 
-        setUploadStatus("success");
-        setValidation({
-          status: "success",
-          message: `${data.count} candidates loaded. Schema valid.`,
-          detail: data.skipped > 0
-            ? `${data.skipped} rows skipped due to errors.`
-            : `Uploaded ${file.name} successfully. Ready for ranking.`,
-          count: data.count,
-          preview: data.preview,
-        });
+        setTimeout(() => {
+          // Store count + preview in state
+          dispatch({
+            type: "SET_UPLOADED_COUNT",
+            payload: { count: data.count, preview: data.preview || [] },
+          });
+          dispatch({ type: "SET_STATUS", payload: "idle" });
+
+          setUploadStatus("success");
+          setValidation({
+            status: "success",
+            message: `${data.count} candidates loaded. Schema valid.`,
+            detail: data.skipped > 0
+              ? `${data.skipped} rows skipped due to errors.`
+              : `Uploaded ${file.name} successfully. Ready for ranking.`,
+            count: data.count,
+            preview: data.preview,
+          });
+        }, delay);
       } catch (err: unknown) {
-        dispatch({ type: "SET_STATUS", payload: "error" });
-        setUploadStatus("error");
-        setValidation({
-          status: "error",
-          message: "Upload failed.",
-          detail: err instanceof Error ? err.message : "Unexpected error.",
-        });
+        const elapsed = Date.now() - startTime;
+        const delay = Math.max(1500 - elapsed, 0);
+
+        setTimeout(() => {
+          dispatch({ type: "SET_STATUS", payload: "error" });
+          setUploadStatus("error");
+          setValidation({
+            status: "error",
+            message: "Upload failed.",
+            detail: err instanceof Error ? err.message : "Unexpected error.",
+          });
+        }, delay);
       }
     },
     [dispatch]
@@ -365,6 +378,41 @@ export default function InputPage() {
               </motion.section>
             )}
           </AnimatePresence>
+
+          {/* Candidate Preview Skeleton during upload */}
+          {uploadStatus === "uploading" && (
+            <section className="space-y-3 animate-pulse">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Parsing Candidates...
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, idx) => (
+                  <article
+                    className="min-h-[180px] rounded-xl border border-border bg-card p-3 space-y-3"
+                    key={idx}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1.5 flex-1">
+                        <Skeleton className="h-3 w-16 animate-pulse" />
+                        <Skeleton className="h-4 w-28 animate-pulse" />
+                      </div>
+                      <Skeleton className="h-5 w-12 rounded-full animate-pulse" />
+                    </div>
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-5/6 animate-pulse" />
+                      <Skeleton className="h-3 w-full animate-pulse" />
+                      <Skeleton className="h-3 w-1/2 animate-pulse" />
+                    </div>
+                    <div className="flex gap-1.5 pt-2">
+                      <Skeleton className="h-5 w-14 rounded-full animate-pulse" />
+                      <Skeleton className="h-5 w-16 rounded-full animate-pulse" />
+                      <Skeleton className="h-5 w-12 rounded-full animate-pulse" />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* Candidate Preview */}
           {uploadStatus === "success" && previewItems.length > 0 && (

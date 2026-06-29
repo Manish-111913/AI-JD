@@ -6,6 +6,7 @@ import {
   BarChart, Bar, Cell, CartesianGrid
 } from "recharts";
 import { useAppContext, BackendResult } from "@/store/appStore";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Cpu, TrendingUp, TrendingDown, Search, AlertTriangle, Sparkles, Loader2, Send, MessageSquare } from "lucide-react";
 
 // Helper to safely get a numeric value from top-level or features dict
@@ -356,6 +357,7 @@ function ExplainScorePanel({ candidate }: { candidate: BackendResult }) {
   const handleExplain = async () => {
     setLoading(true);
     setError("");
+    const startTime = Date.now();
     try {
       const res = await fetch("http://localhost:8000/api/explain-score", {
         method: "POST",
@@ -363,15 +365,23 @@ function ExplainScorePanel({ candidate }: { candidate: BackendResult }) {
         body: JSON.stringify({ candidate_id: candidate.candidate_id }),
       });
       const data = await res.json();
-      if (data.success) {
-        setExplanation(data.explanation || "");
-      } else {
-        setError(data.error || "Failed to generate explanation.");
-      }
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+      setTimeout(() => {
+        if (data.success) {
+          setExplanation(data.explanation || "");
+        } else {
+          setError(data.error || "Failed to generate explanation.");
+        }
+        setLoading(false);
+      }, delay);
     } catch {
-      setError("Could not reach backend.");
-    } finally {
-      setLoading(false);
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+      setTimeout(() => {
+        setError("Could not reach backend.");
+        setLoading(false);
+      }, delay);
     }
   };
 
@@ -391,7 +401,14 @@ function ExplainScorePanel({ candidate }: { candidate: BackendResult }) {
         </button>
       </div>
       {error && <p className="text-[12px] text-red-500">{error}</p>}
-      {explanation && (
+      {loading && (
+        <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+          <Skeleton className="h-4 w-full animate-pulse" />
+          <Skeleton className="h-4 w-5/6 animate-pulse" />
+          <Skeleton className="h-4 w-2/3 animate-pulse" />
+        </div>
+      )}
+      {!loading && explanation && (
         <div className="rounded-lg border border-border bg-background p-3 text-[13px] text-foreground leading-relaxed">
           {explanation}
         </div>
@@ -411,6 +428,7 @@ function AskAIPanel({ candidate }: { candidate: BackendResult }) {
     if (!question.trim()) return;
     setLoading(true);
     setError("");
+    const startTime = Date.now();
     try {
       const res = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
@@ -422,15 +440,23 @@ function AskAIPanel({ candidate }: { candidate: BackendResult }) {
         }),
       });
       const data = await res.json();
-      if (data.success) {
-        setAnswer(data.answer || "");
-      } else {
-        setError(data.error || "Failed to get answer.");
-      }
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+      setTimeout(() => {
+        if (data.success) {
+          setAnswer(data.answer || "");
+        } else {
+          setError(data.error || "Failed to get answer.");
+        }
+        setLoading(false);
+      }, delay);
     } catch {
-      setError("Could not reach backend.");
-    } finally {
-      setLoading(false);
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(1500 - elapsed, 0);
+      setTimeout(() => {
+        setError("Could not reach backend.");
+        setLoading(false);
+      }, delay);
     }
   };
 
@@ -456,7 +482,14 @@ function AskAIPanel({ candidate }: { candidate: BackendResult }) {
         </button>
       </div>
       {error && <p className="text-[12px] text-red-500">{error}</p>}
-      {answer && (
+      {loading && (
+        <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+          <Skeleton className="h-4 w-full animate-pulse" />
+          <Skeleton className="h-4 w-5/6 animate-pulse" />
+          <Skeleton className="h-4 w-2/3 animate-pulse" />
+        </div>
+      )}
+      {!loading && answer && (
         <div className="rounded-lg border border-border bg-background p-3 text-[13px] text-foreground leading-relaxed">
           {answer}
         </div>

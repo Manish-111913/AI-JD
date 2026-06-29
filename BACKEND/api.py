@@ -75,6 +75,7 @@ _state = {
     "session_tokens": 0,
     "session_cost_usd": 0.0,
     "chat_history": [],
+    "precomputed_embeddings_map": None,
 }
 
 # ── Import all backend modules ────────────────────────────────────────────────
@@ -762,43 +763,101 @@ async def rank_candidates(request: Request, body: RankRequest):
         # STAGE 2A — Bi-Encoder Semantic Similarity
         # Vectorized cosine: 3 JD queries x ALL tech candidates.
         # ═══════════════════════════════════════════════════════════════════
+        # On-demand loading of precomputed embeddings to keep RAM usage low until ranking starts
+        if _state.get("precomputed_embeddings_map") is None:
+            try:
+                import numpy as np
+                import json
+                from pathlib import Path
+                npy_path = Path(__file__).parent / "candidate_embeddings.npy"
+                ids_path = Path(__file__).parent / "candidate_embeddings.ids.json"
+                if npy_path.exists() and ids_path.exists():
+                    logger.info("Loading precomputed embeddings from disk...")
+                    emb_arr = np.load(str(npy_path))
+                    with open(ids_path, "r") as f:
+                        ids_list = json.load(f)
+                    
+                    _state["precomputed_embeddings_map"] = {
+                        cid: emb_arr[i] for i, cid in enumerate(ids_list)
+                    }
+                    logger.info(f"Successfully loaded {len(_state['precomputed_embeddings_map'])} precomputed embeddings into memory.")
+                else:
+                    _state["precomputed_embeddings_map"] = {}
+                    logger.info("Precomputed embeddings files not found on disk. Proceeding with fully online embeddings.")
+            except Exception as e:
+                logger.error(f"Failed to load precomputed embeddings: {e}")
+                _state["precomputed_embeddings_map"] = {}
+
         yield _sse_event({
             "stage": 2, "stage_name": "Stage 2A — Bi-Encoder Semantic Similarity",
             "status": "active", "progress": 12,
-            "message": f"Embedding {len(tech_candidates)} candidates with sentence-transformers/all-MiniLM-L6-v2...",
+            "message": f"Calculating semantic similarity for {len(tech_candidates)} candidates...",
         })
         await asyncio.sleep(0.05)
 
-        candidate_texts = [build_candidate_text(c) for c in tech_candidates]
-        all_embeddings = []
-        n_eligible = len(candidate_texts)
-        embed_log_batch = 2000  # Yield updates every 2,000 sentences (takes ~10-15s on CPU)
-
         try:
-            loop = asyncio.get_event_loop()
-            for i in range(0, n_eligible, embed_log_batch):
-                batch_texts = candidate_texts[i : i + embed_log_batch]
-                batch_emb = await loop.run_in_executor(
-                    None, embed_candidates_batch, batch_texts
-                )
-                all_embeddings.append(batch_emb)
-                
-                pct = int((i + len(batch_texts)) / n_eligible * 100)
-                progress_val = 12 + int(((i + len(batch_texts)) / n_eligible) * 10) # range 12 to 22
+            emb_map = _state.get("precomputed_embeddings_map", {})
+            precomputed_count = 0
+            to_embed_indices = []
+            to_embed_texts = []
+            
+            tech_candidate_embeddings = [None] * len(tech_candidates)
+            
+            # Map precomputed vectors vs candidates needing online embedding
+            for idx, c in enumerate(tech_candidates):
+                cid = c["candidate_id"]
+                if cid in emb_map:
+                    tech_candidate_embeddings[idx] = emb_map[cid]
+                    precomputed_count += 1
+                else:
+                    to_embed_indices.append(idx)
+                    to_embed_texts.append(build_candidate_text(c))
+            
+            if precomputed_count > 0:
                 yield _sse_event({
                     "stage": 2,
-                    "progress": progress_val,
+                    "progress": 15,
                     "status": "active",
-                    "message": f"Embedding candidates: {i + len(batch_texts):,}/{n_eligible:,} ({pct}%) complete...",
+                    "message": f"Retrieved {precomputed_count:,}/{len(tech_candidates):,} candidates from precomputed cache...",
                 })
-                await asyncio.sleep(0.02)
-
-            candidate_embeddings = np.vstack(all_embeddings)
+                await asyncio.sleep(0.05)
+            
+            # Batch embed any remaining/custom candidates online
+            if to_embed_texts:
+                n_eligible = len(to_embed_texts)
+                embed_log_batch = 2000
+                online_embeddings = []
+                loop = asyncio.get_event_loop()
+                
+                for i in range(0, n_eligible, embed_log_batch):
+                    batch_texts = to_embed_texts[i : i + embed_log_batch]
+                    batch_emb = await loop.run_in_executor(
+                        None, embed_candidates_batch, batch_texts
+                    )
+                    online_embeddings.append(batch_emb)
+                    
+                    pct = int((i + len(batch_texts)) / n_eligible * 100)
+                    progress_val = 15 + int(((i + len(batch_texts)) / n_eligible) * 7)  # range 15 to 22
+                    yield _sse_event({
+                        "stage": 2,
+                        "progress": progress_val,
+                        "status": "active",
+                        "message": f"Embedding new candidates online: {i + len(batch_texts):,}/{n_eligible:,} ({pct}%) complete...",
+                    })
+                    await asyncio.sleep(0.02)
+                
+                online_embeddings_np = np.vstack(online_embeddings)
+                for idx, val_idx in enumerate(to_embed_indices):
+                    tech_candidate_embeddings[val_idx] = online_embeddings_np[idx]
+            
+            candidate_embeddings = np.vstack(tech_candidate_embeddings)
 
             yield _sse_event({
                 "stage": 2, "progress": 22, "status": "active",
                 "message": "Computing 3-query cosine similarity (Q1x60% + Q2x30% + Q3x10%)...",
             })
+            
+            loop = asyncio.get_event_loop()
             semantic_scores_arr = await loop.run_in_executor(
                 None, compute_semantic_scores_vectorized, candidate_embeddings
             )
@@ -874,6 +933,7 @@ async def rank_candidates(request: Request, body: RankRequest):
                 })
                 await asyncio.sleep(0.01)
 
+        _state["honeypots_flagged"] = flagged_count
         yield _sse_event({
             "stage": 3, "progress": 40, "status": "completed",
             "message": f"Honeypot detection complete. {flagged_count} flagged.",
@@ -1154,6 +1214,7 @@ async def rank_candidates(request: Request, body: RankRequest):
                 "ce_shortlist_size": len(shortlisted_candidates),
                 "final_ranked": len(results),
                 "runtime_s": elapsed,
+                "honeypots_flagged": flagged_count,
             },
         })
 
@@ -1175,7 +1236,21 @@ async def rank_candidates(request: Request, body: RankRequest):
 async def get_results():
     if not _state["results"]:
         raise HTTPException(404, "No results available. Run ranking first.")
-    return {"results": _state["results"], "count": len(_state["results"])}
+    
+    flagged = _state.get("honeypots_flagged")
+    if flagged is None:
+        try:
+            from feature_cache import FeatureCache
+            cache = FeatureCache()
+            flagged = sum(1 for v in cache._cache.values() if v.get("honeypot_confidence", 0.0) > 0.55)
+        except Exception:
+            flagged = 0
+            
+    return {
+        "results": _state["results"], 
+        "count": len(_state["results"]),
+        "honeypots_flagged": flagged
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

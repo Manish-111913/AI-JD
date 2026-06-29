@@ -124,14 +124,14 @@ export default function RankingPage() {
               setProgress(100);
 
               const results: BackendResult[] = evt.results;
-              dispatch({ type: "SET_BACKEND_RESULTS", payload: results });
+              const honeypotsFlagged = evt.pipeline_stats?.honeypots_flagged || 0;
+              dispatch({ type: "SET_BACKEND_RESULTS", payload: results, honeypotsFlagged });
               dispatch({ type: "SET_STATUS", payload: "done" });
               dispatch({
                 type: "SET_PIPELINE_RUNTIME",
                 payload: { runtime: evt.runtime_seconds || 0, total: evt.candidates_processed || results.length },
               });
 
-              const honeypots = results.filter(r => (r.honeypot_confidence || 0) > 0.55).length;
               const promoted = results.filter(r => (r.rank_delta || 0) > 5).length;
 
               setPipelineStats({
@@ -139,7 +139,7 @@ export default function RankingPage() {
                 runtime: evt.runtime_seconds || 0,
                 shortlisted: evt.candidates_processed || results.length,
                 promoted,
-                honeypots,
+                honeypots: honeypotsFlagged,
               });
               setShowSummary(true);
             }

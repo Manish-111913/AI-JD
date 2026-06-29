@@ -20,23 +20,23 @@ const TABS = [
 const JD_QUERY = "Senior ML engineer with expertise in dense retrieval, vector embeddings, semantic similarity, FAISS, Weaviate, Pinecone, reranking pipelines, production-grade search and ranking systems, ANN search";
 
 function profColor(p: string) {
-  if (p === "expert") return "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300";
-  if (p === "advanced") return "bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300";
-  if (p === "intermediate") return "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300";
-  return "bg-muted text-muted-foreground";
+  if (p === "expert") return "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200/40 dark:border-emerald-800/30";
+  if (p === "advanced") return "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-200/40 dark:border-blue-800/30";
+  if (p === "intermediate") return "bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 border border-amber-200/40 dark:border-amber-800/30";
+  return "bg-muted text-muted-foreground border border-border";
 }
 
 function trustColor(t: number) {
-  if (t >= 0.8) return "text-emerald-600 dark:text-emerald-400";
-  if (t >= 0.5) return "text-ai";
-  return "text-amber-600 dark:text-amber-400";
+  if (t >= 0.8) return "text-emerald-600 dark:text-emerald-400 font-bold";
+  if (t >= 0.5) return "text-purple-600 dark:text-purple-400 font-bold";
+  return "text-amber-600 dark:text-amber-500 font-bold";
 }
 
 function companyBadge(type: string) {
   const m: Record<string, string> = {
-    product: "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800",
-    consulting: "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800",
-    research: "bg-ai/10 text-ai border-ai/20",
+    product: "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-900/50",
+    consulting: "bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-900/50",
+    research: "bg-purple-50 dark:bg-purple-950/20 text-purple-600 dark:text-purple-400 border-purple-100 dark:border-purple-900/50",
     startup: "bg-muted text-foreground border-border",
   };
   return m[type] || "bg-muted text-muted-foreground border-border";
@@ -53,7 +53,8 @@ export default function CandidateDetailPanel({ onClose }: { onClose: () => void 
 
   const delta = c.algo_rank - c.rank;
   const algoNorm = Math.min(1, (100 - c.algo_rank) / 100);
-  const ceNorm = c.ce_score / 100;
+  const ceScore = c.ce_score <= 1 ? c.ce_score * 100 : c.ce_score;
+  const ceNorm = ceScore / 100;
   const blended = (0.4 * algoNorm + 0.6 * ceNorm).toFixed(3);
   const candidatePassage = `${c.current_title} at ${c.current_company}. ${c.years_of_experience.toFixed(1)} years of experience. ${c.summary?.slice(0, 200) ?? ""}`;
 
@@ -145,14 +146,13 @@ export default function CandidateDetailPanel({ onClose }: { onClose: () => void 
                     <span className="text-[11px] text-muted-foreground">Behavioral multiplier</span>
                     <span className="font-mono font-bold text-foreground">×{c.behavioral_multiplier.toFixed(2)}</span>
                   </div>
-                  {/* CE bar */}
                   <div className="mt-2 pt-2 border-t border-ai/15">
                     <div className="flex items-center gap-3">
                       <span className="text-[11px] text-ai font-medium w-36 flex-shrink-0">Cross-Encoder Score</span>
                       <div className="flex-1 h-1.5 bg-ai/15 rounded-full overflow-hidden">
-                        <div className="h-full bg-ai rounded-full" style={{ width: `${c.ce_score}%` }} />
+                        <div className="h-full bg-ai rounded-full" style={{ width: `${ceScore}%` }} />
                       </div>
-                      <span className="text-[11px] font-mono font-bold text-ai w-10 text-right">{Math.round(c.ce_score)}</span>
+                      <span className="text-[11px] font-mono font-bold text-ai w-10 text-right">{Math.round(ceScore)}</span>
                     </div>
                   </div>
                 </div>
@@ -173,64 +173,75 @@ export default function CandidateDetailPanel({ onClose }: { onClose: () => void 
 
             {/* ── Skills ── */}
             {tab === "skills" && (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <p className="text-[12px] text-muted-foreground">Sorted by JD match then trust score.</p>
-                <table className="w-full text-[12px]">
-                  <thead>
-                    <tr className="border-b border-border">
-                      {["Skill", "Proficiency", "Months", "Endorsements", "Trust", "JD Match"].map(h => (
-                        <th key={h} className="pb-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground pr-3">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {c.skills.map((s, i) => {
-                      const trust = Math.min(1, (s.proficiency === "expert" ? 0.9 : s.proficiency === "advanced" ? 0.7 : 0.45) *
-                        (1 / (1 + Math.exp(-(s.duration_months / 12 - 1)))) *
-                        Math.log(s.endorsement_count + 2) / Math.log(10));
-                      return (
-                        <tr key={i} className="border-b border-border/40 hover:bg-muted/30 transition-colors">
-                          <td className="py-2 pr-3 font-medium text-foreground">{s.name}</td>
-                          <td className="py-2 pr-3">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-[4px] font-medium ${profColor(s.proficiency)}`}>{s.proficiency}</span>
-                          </td>
-                          <td className="py-2 pr-3 font-mono text-foreground">{s.duration_months}m</td>
-                          <td className="py-2 pr-3 font-mono text-foreground">{s.endorsement_count}</td>
-                          <td className="py-2 pr-3">
-                            <span className={`font-mono font-bold ${trustColor(trust)}`}>{trust.toFixed(2)}</span>
-                          </td>
-                          <td className="py-2 pr-3 text-muted-foreground text-[11px]">
-                            {["Embeddings", "Vector DB", "Retrieval", "LLMs", "Evaluation", "Python"].find(cat =>
-                              s.name.toLowerCase().includes(cat.toLowerCase().split(" ")[0])
-                            ) || "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px] text-left">
+                    <thead>
+                      <tr className="border-b border-border">
+                        {["SKILL", "PROFICIENCY", "MONTHS", "ENDORSEMENTS", "TRUST", "JD MATCH"].map(h => (
+                          <th key={h} className="pb-3 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80 pr-4">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {c.skills.map((s, i) => {
+                        const duration = s.duration_months || 0;
+                        const endorsements = s.endorsements ?? s.endorsement_count ?? 0;
+                        const trust = Math.min(1, (s.proficiency === "expert" ? 0.9 : s.proficiency === "advanced" ? 0.7 : 0.45) *
+                          (1 / (1 + Math.exp(-(duration / 12 - 1)))) *
+                          Math.log(endorsements + 2) / Math.log(10));
+                        return (
+                          <tr key={i} className="border-b border-border/40 hover:bg-muted/10 transition-colors">
+                            <td className="py-3 pr-4 font-semibold text-foreground text-[12.5px]">{s.name}</td>
+                            <td className="py-3 pr-4">
+                              <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${profColor(s.proficiency)}`}>{s.proficiency}</span>
+                            </td>
+                            <td className="py-3 pr-4 font-mono text-muted-foreground">{duration}m</td>
+                            <td className="py-3 pr-4 font-mono text-muted-foreground">{endorsements}</td>
+                            <td className="py-3 pr-4">
+                              <span className={`font-mono ${trustColor(trust)}`}>{trust.toFixed(2)}</span>
+                            </td>
+                            <td className="py-3 pr-4 text-muted-foreground text-[11px]">
+                              {["Embeddings", "Vector DB", "Retrieval", "LLMs", "Evaluation", "Python"].find(cat =>
+                                s.name.toLowerCase().includes(cat.toLowerCase().split(" ")[0])
+                              ) || "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
             {/* ── Career ── */}
             {tab === "career" && (
-              <div className="space-y-4">
+              <div className="relative pl-2 space-y-0">
+                {/* Timeline line */}
+                <div className="absolute left-[12px] top-3 bottom-3 w-[1.5px] bg-muted-foreground/15 -translate-x-[50%]" />
+                
                 {c.career_history.map((r, i) => (
-                  <div key={i} className="relative pl-5 border-l-2 border-border">
-                    <div className="absolute -left-1.5 top-1.5 w-2.5 h-2.5 rounded-full bg-foreground/20 border border-border" />
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-[4px] border ${companyBadge(r.company_type)}`}>
+                  <div key={i} className="relative pl-6 pb-6 last:pb-1 group">
+                    {/* Timeline dot */}
+                    <div className="absolute left-[12px] top-[10px] w-2.5 h-2.5 rounded-full bg-muted-foreground/40 border border-background -translate-x-[50%] transition-transform group-hover:scale-110" />
+                    
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${companyBadge(r.company_type)}`}>
                         {r.company_type.charAt(0).toUpperCase() + r.company_type.slice(1)}
                       </span>
                       <span className="text-[11px] text-muted-foreground">{r.duration_months}m</span>
-                      {i === 0 && <span className="text-[10px] text-muted-foreground font-mono">Current × 2.5</span>}
+                      {i === 0 && <span className="text-[11px] text-muted-foreground/80 font-mono">Current × 2.5</span>}
                     </div>
-                    <div className="text-[13px] font-semibold text-foreground">{r.title}</div>
-                    <div className="text-[12px] text-muted-foreground">{r.company} · {r.industry}</div>
-                    <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{r.description.slice(0, 180)}…</p>
-                    {r.description.toLowerCase().includes("deploy") && (
-                      <div className="inline-flex items-center gap-1 mt-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                        <CheckCircle2 className="w-3 h-3" /> Production Evidence Found
+                    
+                    <h3 className="text-[13px] font-bold text-foreground mt-0.5">{r.title}</h3>
+                    <div className="text-[11px] text-muted-foreground/85 font-medium">{r.company} · {r.industry}</div>
+                    <p className="text-[11.5px] text-muted-foreground/95 mt-1.5 leading-relaxed">{r.description.slice(0, 220)}…</p>
+                    
+                    {(r.description.toLowerCase().includes("deploy") || r.description.toLowerCase().includes("production") || r.description.toLowerCase().includes("build")) && (
+                      <div className="inline-flex items-center gap-1 mt-2 text-[10.5px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/50 dark:bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-900/20">
+                        <span>✓ Production Evidence Found</span>
                       </div>
                     )}
                   </div>
@@ -352,7 +363,7 @@ export default function CandidateDetailPanel({ onClose }: { onClose: () => void 
                   <div className="grid grid-cols-2 gap-3">
                     {[
                       { label: "Algorithmic Rank (pre-CE)", value: `#${c.algo_rank}` },
-                      { label: "CE Score", value: `${Math.round(c.ce_score)} / 100` },
+                      { label: "CE Score", value: `${Math.round(ceScore)} / 100` },
                       { label: "Final Blended Rank", value: `#${c.rank}` },
                       { label: "Rank Change", value: delta === 0 ? "Stable" : delta > 0 ? `↑ +${delta} promoted` : `↓ ${delta} demoted`, color: delta > 0 ? "text-emerald-500" : delta < 0 ? "text-red-500" : "text-muted-foreground" },
                     ].map(s => (
@@ -370,7 +381,7 @@ export default function CandidateDetailPanel({ onClose }: { onClose: () => void 
                   <div className="font-mono text-[12px] text-muted-foreground space-y-1">
                     <div>0.40 × algo_normalized + 0.60 × ce_score = blended_score</div>
                     <div className="text-foreground font-medium">
-                      0.40 × {algoNorm.toFixed(3)} + 0.60 × {(c.ce_score / 100).toFixed(3)} = {blended}
+                      0.40 × {algoNorm.toFixed(3)} + 0.60 × {ceNorm.toFixed(3)} = {blended}
                     </div>
                   </div>
                 </div>
