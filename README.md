@@ -180,6 +180,7 @@ The `BACKEND/` folder has its own [`README.md`](BACKEND/README.md) with deeper t
 
 ---
 
+<<<<<<< HEAD
 ## 📊 Scaling Benchmarks & Performance Tuning (10K vs. 1 Lakh Candidates)
 
 Below are the end-to-end pipeline runtimes for **10,000** and **100,000 (1 Lakh)** candidates, depending on your system's hardware configuration (GPU vs. CPU) and caching.
@@ -272,30 +273,48 @@ Yes! The large precomputed binary files (`candidate_embeddings.npy` and `feature
 
 If candidate ranking requests take a long time (e.g., several minutes or longer) for large datasets (e.g., 100K candidates), check for these key bottlenecks and optimization opportunities:
 
-### 1️⃣ CPU-Only Execution vs. GPU Acceleration
+### 1️⃣ Lack of Pre-computed Embeddings (Online Embedding Overhead)
+* **The Problem:** Running ranking without pre-computed embeddings forces the backend to run online inference on the CPU/GPU for thousands of profiles.
+* **The Solution:** Use `setup.py` to generate the `.npy` embeddings once offline:
+  ```bash
+  cd BACKEND
+  python setup.py --candidates <path_to_candidates.jsonl>
+  ```
+  Then, pass the saved embeddings file to the runner:
+  ```bash
+  python rank.py --candidates ./candidates.jsonl --embeddings ./candidate_embeddings.npy --out ./submission.csv
+  ```
+
+### 2️⃣ CPU-Only Execution vs. GPU Acceleration
 * **The Problem:** Standard PyTorch installations run on the CPU, making transformer inference (`all-MiniLM-L6-v2`) extremely slow.
 * **The Solution:** If you have an NVIDIA GPU, install PyTorch with CUDA support to achieve a **40x speedup** (reducing embedding time from 14 minutes to ~20 seconds):
   ```bash
   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
   ```
 
-### 2️⃣ Ignored/Truncated Tokens in Candidate Text
+### 3️⃣ Ignored/Truncated Tokens in Candidate Text
 * **The Problem:** The bi-encoder model (`all-MiniLM-L6-v2`) has a hard input limit of **256 tokens** (approx. 750–1000 characters). By default, `build_candidate_text` generates representations of ~1,080 characters. The extra tokens are tokenized (wasting CPU cycles) and then immediately discarded.
 * **The Solution:** Shorten `build_candidate_text` in `data_loader.py` to keep only the latest 2 roles and shorter descriptions (under 600 characters). This increases throughput from **41 to 106 candidates/sec** (a **2.5x CPU speedup**).
 
-### 3️⃣ Low Title Gate Threshold
+### 4️⃣ Low Title Gate Threshold
 * **The Problem:** Setting `TITLE_GATE_THRESHOLD = 0.05` allows General Tech titles (e.g., Java developers or web developers) to pass the pre-filter and get embedded, even though they will not make the final top list.
 * **The Solution:** Set `TITLE_GATE_THRESHOLD = 0.30` in `config.py`. This immediately filters out General Tech and Non-Tech roles, reducing the candidate embedding load by **~18%**.
 
-### 4️⃣ CPU Thread Contention (OMP Threading Overhead)
+### 5️⃣ CPU Thread Contention (OMP Threading Overhead)
 * **The Problem:** On high-core CPUs, PyTorch automatically spawns too many threads, causing logical cores to waste time context-switching.
 * **The Solution:** Set OpenMP environment variables to limit thread counts before running the script:
   * **Windows (PowerShell):** `$env:OMP_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1"`
   * **macOS/Linux:** `export OMP_NUM_THREADS=1; export MKL_NUM_THREADS=1`
 
-### 5️⃣ Low RAM & Swap/Pagefile Thrashing
-* **The Problem:** Loading candidate profiles alongside embedding and cross-encoder models requires at least **1.5 GB to 2.5 GB of free RAM**. If your system runs out of memory, it swaps pages to disk, causing a huge performance penalty.
-* **The Solution:** Ensure your machine has at least **4 GB of total RAM** allocated and close other heavy applications.
+### 6️⃣ Low RAM & Swap/Pagefile Thrashing
+* **The Problem:** Loading candidate profiles alongside embedding and cross-encoder models requires at least **1.5 GB to 2.5 GB of free RAM**. If your system or VM runs out of memory, it starts swapping memory pages to disk, causing a huge performance penalty (up to 100x slowdown).
+* **The Solution:** Ensure your machine or container has at least **4 GB of total RAM** allocated, and close other heavy applications.
+
+### 7️⃣ Offline / Proxy Network Timeouts
+* **The Problem:** By default, Hugging Face `transformers` attempts to contact its server to check for updates every time a model is loaded, leading to 30–60 second connection timeouts if you are offline or behind a strict proxy/firewall.
+* **The Solution:** Force Hugging Face into offline mode using environment variables:
+  * **Windows (PowerShell):** `$env:TRANSFORMERS_OFFLINE="1"; $env:HF_HUB_OFFLINE="1"`
+  * **macOS/Linux:** `export TRANSFORMERS_OFFLINE=1; export HF_HUB_OFFLINE=1`
 
 ---
 
