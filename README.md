@@ -267,6 +267,7 @@ Yes! The large precomputed binary files (`candidate_embeddings.npy` and `feature
    This will generate the local caches, enabling sub-minute UI rankings instantly.
 
 ---
+
 ## ⚡ Troubleshooting & Performance Tuning
 
 If candidate ranking requests take a long time (e.g., several minutes or longer) for large datasets (e.g., 100K candidates), check for these key bottlenecks and optimization opportunities:
