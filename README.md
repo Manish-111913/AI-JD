@@ -180,65 +180,105 @@ The `BACKEND/` folder has its own [`README.md`](BACKEND/README.md) with deeper t
 
 ---
 
-## 📊 Scaling Benchmarks (10K vs. 1 Lakh Candidates)
+## 📊 Scaling Benchmarks & Performance Tuning (10K vs. 1 Lakh Candidates)
 
-Below are the approximate end-to-end pipeline runtimes for **10,000** and **100,000 (1 Lakh)** candidates, depending on your system's hardware configuration (GPU vs. CPU) and cache status.
+Below are the end-to-end pipeline runtimes for **10,000** and **100,000 (1 Lakh)** candidates, depending on your system's hardware configuration (GPU vs. CPU) and caching.
 
-*Note: Estimates assume a typical distribution where ~31% of candidates pass the Title Gate to proceed to embedding and composite scoring stages.*
+> [!NOTE]
+> In real-world tests on a typical 8-thread CPU with a cold cache (where ~30% of candidates pass the title gate), embedding 30,163 candidates can take **~14.3 minutes (859.6s)** because CPU inference is slow and candidate profile strings are long. Optimizing candidate text length and filtering settings can reduce this by **2.5x to 3.5x**.
 
-| Dataset Size | Hardware | Cache Status | Upload & Validate | Bi-Encoder (Embed) | Cross-Encoder (CE)* | Total End-to-End Time |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **10K Candidates** | GPU Accelerated | Hot (Cached) | ~1.0s | ~2.0s | ~0.5s | **~3.5 seconds** |
-| | GPU Accelerated | Cold (No Cache) | ~1.0s | ~2.0s | ~0.5s | **~5.5 seconds** |
-| | CPU Only | Hot (Cached) | ~1.0s | ~15.0s | ~10.0s | **~26.0 seconds** |
-| | CPU Only | Cold (No Cache) | ~1.0s | ~15.0s | ~10.0s | **~28.0 seconds** |
-| **100K Candidates** | GPU Accelerated | Hot (Cached) | ~12.0s | ~20.0s | ~0.5s | **~32.5 seconds** |
-| *(1 Lakh)* | GPU Accelerated | Cold (No Cache) | ~12.0s | ~20.0s | ~0.5s | **~52.5 seconds** |
-| | CPU Only | Hot (Cached) | ~12.0s | ~2.5 min | ~10.0s | **~2.8 minutes** |
-| | CPU Only | Cold (No Cache) | ~12.0s | ~2.5 min | ~10.0s | **~3.2 minutes** |
+### ⏱️ Runtime Matrix
+
+| Dataset Size | Hardware | Title Filter Gate | Candidate Text Format | Upload & Validate | Bi-Encoder (Embed) | Cross-Encoder (CE)* | Total End-to-End Time |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **10K Candidates** | GPU Accelerated | Active (`0.05`) | Standard (~1080 chars) | ~1.0s | ~2.0s | ~0.5s | **~3.5 seconds** |
+| | CPU Only | Active (`0.05`) | Standard (~1080 chars) | ~1.0s | ~84.0s | ~8.0s | **~1.5 minutes** |
+| **100K Candidates** | GPU Accelerated | Active (`0.05`) | Standard (~1080 chars) | ~15.0s | ~20.0s | ~0.5s | **~35.5 seconds** |
+| *(1 Lakh)* | CPU Only | Active (`0.05`) | Standard (~1080 chars) | ~15.0s | ~14.0 mins | ~8.0s | **~14.3 minutes** |
+| | CPU Only (Optimized) | Active (`0.30`) | Shortened (<600 chars) | ~15.0s | ~4.5 mins | ~8.0s | **~4.8 minutes** |
 
 *\*Note: Cross-encoder re-ranking is capped dynamically at a maximum of the top 300 candidates (defined by `compute_dynamic_shortlist_size` in `config.py`), which is why the Stage 3 CE time remains constant regardless of the total input size.*
 
 ---
 
+## 🚀 Precomputation Workflow (The Secret to Sub-Minute Runtimes)
+
+If you run the pipeline online without precomputation, you will encounter the primary CPU embedding bottleneck. For example, for **100,000 candidates** (with ~30,000 passing the title filter), the pipeline stats show:
+
+```text
+[16:44:34] Embedding 30163 candidates with sentence-transformers/all-MiniLM-L6-v2...
+...
+[16:58:38] Embedding complete
+```
+* **Total Embedding Time:** **14 minutes 4 seconds (844 seconds)** (approx. 98% of the total pipeline runtime).
+
+### The Solution: Offline Precomputation
+
+The Redrob Candidate Ranker is architected to separate the heavy deep learning inference from the ranking/scoring logic. By precomputing candidate representations, you bypass the 14-minute embedding step completely.
+
+#### Step 1: Precompute Candidate Embeddings (Once Only)
+Run `setup.py` offline to download models and pre-calculate all 100K candidate embeddings. This takes ~25–40 minutes on CPU, but only has to be done **once**:
+```bash
+python setup.py --candidates ./candidates.jsonl
+```
+This generates two output cache files in your backend folder:
+1. `candidate_embeddings.npy` — The raw embedding matrix.
+2. `candidate_embeddings.ids.json` — The candidate ID mapping list.
+
+#### Step 2: Run `rank.py` using Precomputed Caches
+For all future runs, point the ranker to these files. The engine will load the pre-computed embeddings instantly:
+```bash
+python rank.py \
+  --candidates candidates.jsonl \
+  --embeddings candidate_embeddings.npy \
+  --features-cache features_cache.pkl \
+  --out submission.csv
+```
+
+### Expected Runtimes with Precomputation Enabled
+
+When precomputation is enabled, the 14-minute online embedding phase is replaced by a 3–5 second file load:
+
+| Stage | Duration |
+| :--- | :--- |
+| Load Candidates & Pre-Filter | ~5 – 10 seconds |
+| Load Precomputed Embeddings | ~3 – 5 seconds |
+| Vectorized Cosine Similarity | ~2 – 5 seconds |
+| Composite Feature Scoring | ~5 – 10 seconds |
+| Cross-Encoder (Shortlist of 300) | ~15 – 20 seconds |
+| CSV Export | < 1 second |
+| **Total End-to-End Execution** | **~35 – 60 seconds** |
+
+---
+
 ## ⚡ Troubleshooting & Performance Tuning
 
-If candidate ranking requests take a long time (e.g. several minutes or longer) for large datasets (e.g. 10,000+ candidates), check for these top 5 common performance bottlenecks:
+If candidate ranking requests take a long time (e.g., several minutes or longer) for large datasets (e.g., 100K candidates), check for these key bottlenecks and optimization opportunities:
 
-### 1️⃣ Lack of Pre-computed Embeddings (Online Embedding Overhead)
-* **The Problem:** Running ranking without pre-computed embeddings forces the backend to run online inference on the CPU/GPU for thousands of profiles.
-* **The Solution:** Use `setup.py` to generate the `.npy` embeddings once off-line.
+### 1️⃣ CPU-Only Execution vs. GPU Acceleration
+* **The Problem:** Standard PyTorch installations run on the CPU, making transformer inference (`all-MiniLM-L6-v2`) extremely slow.
+* **The Solution:** If you have an NVIDIA GPU, install PyTorch with CUDA support to achieve a **40x speedup** (reducing embedding time from 14 minutes to ~20 seconds):
   ```bash
-  cd BACKEND
-  python setup.py --candidates <path_to_candidates.jsonl>
-  ```
-  Then, pass the saved embeddings file to the runner:
-  ```bash
-  python rank.py --candidates ./candidates.jsonl --embeddings ./candidate_embeddings.npy --out ./submission.csv
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
   ```
 
-### 2️⃣ CPU-Only Execution vs. GPU Acceleration
-* **The Problem:** Standard installation installs the CPU-only version of PyTorch. Running transformers on CPU is 10x-50x slower than on a GPU.
-* **The Solution:** If you have an NVIDIA GPU, install PyTorch with CUDA support:
-  ```bash
-  pip install torch --select-index https://download.pytorch.org/whl/cu121
-  ```
+### 2️⃣ Ignored/Truncated Tokens in Candidate Text
+* **The Problem:** The bi-encoder model (`all-MiniLM-L6-v2`) has a hard input limit of **256 tokens** (approx. 750–1000 characters). By default, `build_candidate_text` generates representations of ~1,080 characters. The extra tokens are tokenized (wasting CPU cycles) and then immediately discarded.
+* **The Solution:** Shorten `build_candidate_text` in `data_loader.py` to keep only the latest 2 roles and shorter descriptions (under 600 characters). This increases throughput from **41 to 106 candidates/sec** (a **2.5x CPU speedup**).
 
-### 3️⃣ CPU Thread Contention (OMP Threading Overhead)
+### 3️⃣ Low Title Gate Threshold
+* **The Problem:** Setting `TITLE_GATE_THRESHOLD = 0.05` allows General Tech titles (e.g., Java developers or web developers) to pass the pre-filter and get embedded, even though they will not make the final top list.
+* **The Solution:** Set `TITLE_GATE_THRESHOLD = 0.30` in `config.py`. This immediately filters out General Tech and Non-Tech roles, reducing the candidate embedding load by **~18%**.
+
+### 4️⃣ CPU Thread Contention (OMP Threading Overhead)
 * **The Problem:** On high-core CPUs, PyTorch automatically spawns too many threads, causing logical cores to waste time context-switching.
 * **The Solution:** Set OpenMP environment variables to limit thread counts before running the script:
   * **Windows (PowerShell):** `$env:OMP_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1"`
   * **macOS/Linux:** `export OMP_NUM_THREADS=1; export MKL_NUM_THREADS=1`
 
-### 4️⃣ Low RAM & Swap/Pagefile Thrashing
-* **The Problem:** Loading candidate profiles alongside embedding and cross-encoder models requires at least **1.5 GB to 2.5 GB of free RAM**. If your system or VM runs out of memory, it starts swapping memory pages to the disk, causing a huge performance penalty (up to 100x slowdown).
-* **The Solution:** Ensure your machine or container has at least **4 GB of total RAM** allocated, and close other heavy applications.
-
-### 5️⃣ Offline / Proxy Network Timeouts
-* **The Problem:** By default, Hugging Face `transformers` attempts to contact its server to check for updates every time a model is loaded, leading to 30–60 second connection timeouts if you are offline or behind a strict proxy/firewall.
-* **The Solution:** Force Hugging Face into offline mode using environment variables:
-  * **Windows (PowerShell):** `$env:TRANSFORMERS_OFFLINE="1"; $env:HF_HUB_OFFLINE="1"`
-  * **macOS/Linux:** `export TRANSFORMERS_OFFLINE=1; export HF_HUB_OFFLINE=1`
+### 5️⃣ Low RAM & Swap/Pagefile Thrashing
+* **The Problem:** Loading candidate profiles alongside embedding and cross-encoder models requires at least **1.5 GB to 2.5 GB of free RAM**. If your system runs out of memory, it swaps pages to disk, causing a huge performance penalty.
+* **The Solution:** Ensure your machine has at least **4 GB of total RAM** allocated and close other heavy applications.
 
 ---
 
