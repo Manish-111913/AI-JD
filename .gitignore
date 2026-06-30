@@ -64,3 +64,4 @@ venv/
 
 # Misc
 testem.log
+candidates.jsonl
