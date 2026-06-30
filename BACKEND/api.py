@@ -40,13 +40,20 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Redrob Candidate Ranker API", version="1.0.0")
 
-# ── CORS — allow Next.js dev server ──────────────────────────────────────────
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# In development:  ALLOWED_ORIGIN is unset → allow all origins (["*"])
+# In production:   Set ALLOWED_ORIGIN=https://your-app.vercel.app in the
+#                  Render dashboard to restrict access to only your frontend.
+_allowed_origin = os.getenv("ALLOWED_ORIGIN", "*")
+_cors_origins = [_allowed_origin] if _allowed_origin != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=_allowed_origin != "*",  # credentials require explicit origins
+    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+    expose_headers=["Content-Disposition"],    # needed for CSV download
 )
 
 # ── In-memory state ───────────────────────────────────────────────────────────

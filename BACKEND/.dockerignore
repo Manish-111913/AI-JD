@@ -1,13 +1,44 @@
-__pycache__
+# Python artifacts
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
-.pytest_cache
-.mypy_cache
-.venv
-venv
-env
-.git
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Large precomputed files (loaded at runtime from repo or generated fresh)
+# Comment these out ONLY if you want to bake embeddings into the Docker image
+# (significantly increases image size — ~150 MB extra)
 candidate_embeddings.npy
-*.ids.json
+candidate_embeddings.ids.json
+
+# Feature cache (regenerated on first run)
+features_cache.pkl
+
+# Env files (secrets must be set via Render dashboard)
+.env
+.env.*
+!.env.example
+
+# Development / scratch
+scratch/
+*.ipynb
+
+# Render config (not needed inside container)
+render.yaml
