@@ -1,0 +1,108 @@
+# Redrob Hackathon — Submission Metadata
+#
+# Filled from submission_metadata_template.yaml
+# Place this file at your repo root as `submission_metadata.yaml`.
+
+# ============================================================================
+# Team identity
+# ============================================================================
+team_name: "LEO"
+
+primary_contact:
+  name: "Kota Srirama Manish"
+  email: "manishcse2006@gmail.com"
+  phone: "+91-9381890654"
+
+team_members:
+  - name: "Kota Srirama Manish"
+    email: "manishcse2006@gmail.com"
+    role: "Frontend, Deployment, ML Engineer, Backend Logic"
+  - name: "Narisetty Vineela"
+    email: "chowdaryvineelan@gmail.com"
+    role: "Backend, Deployment, ML Engineer"
+
+# ============================================================================
+# Code and reproducibility
+# ============================================================================
+github_repo: "https://github.com/Manish-111913/AI-JD"
+# NOTE: trimmed trailing ".git" to match the portal's expected format
+# (https://github.com/USERNAME/REPO). Both forms work for git clone --
+# this is just for consistency with the portal field.
+
+sandbox_link: "TODO — REQUIRED before submission"
+# Must be a working hosted environment that runs your ranker on a small
+# sample (≤100 candidates) and produces a ranked CSV within 5 minutes on CPU.
+# Acceptable: HuggingFace Spaces, Streamlit Cloud, Replit, Colab, Docker, Binder.
+# Submissions without a working sandbox link are flagged at Stage 1 (spec 10.5).
+
+reproduce_command: "python rank.py --candidates ./candidates.jsonl --out ./submission.csv"
+# This is the single command that produces submission.csv from candidates.jsonl,
+# matching the competition-mode entrypoint built throughout your pipeline
+# (title pre-filter -> bi-encoder -> cross-encoder -> output writer).
+# Embeddings (precompute_embeddings.py) and feature caching run separately,
+# offline, before this command -- only the ranking step itself must fit the
+# 5-minute / 16GB / CPU-only / no-network budget.
+
+# ============================================================================
+# Compute environment
+# ============================================================================
+compute:
+  platform: "Dell Inspiron 15 3525 (Windows 11 laptop)"
+  cpu_cores: 8                                  # AMD Ryzen 7 5825U — 8 cores / 16 threads
+  ram_gb: 16                                    # 16.0 GB installed (15.4 GB usable)
+  python_version: "Python 3.11.9"
+  os: "Windows 11 Home"
+  uses_gpu_for_inference: false
+  has_network_during_ranking: false
+  pre_computation_required: true                # embeddings are pre-computed offline
+  pre_computation_time_minutes: 30              # ESTIMATE — replace with your measured time once you've run precompute_embeddings.py on this machine
+
+# ============================================================================
+# AI tools declaration
+# ============================================================================
+ai_tools_used:
+  - "Claude"
+  - "ChatGPT"
+  - "GitHub Copilot"
+
+ai_usage_summary: |
+  Used Claude for architecture design, backend and frontend specification,
+  and documentation throughout development. Used ChatGPT for debugging and
+  exploratory problem-solving. Used GitHub Copilot for inline autocomplete
+  during implementation. No candidate data from candidates.jsonl was sent to
+  any external LLM API during the ranking step -- all ranking logic
+  (title filtering, bi-encoder scoring, cross-encoder re-ranking) runs
+  locally with no network calls, per the competition's no-network constraint.
+
+# ============================================================================
+# Approach summary
+# ============================================================================
+methodology_summary: |
+  RedroBRanker uses a three-stage neural retrieval pipeline. A title
+  pre-filter eliminates ~69,000 irrelevant non-tech profiles instantly via
+  lookup table. A bi-encoder (sentence-transformers all-MiniLM-L6-v2)
+  computes semantic similarity between three targeted JD embedding queries
+  and the ~31,000 remaining candidates, combined with a six-component
+  composite score (skill trust, career quality, experience curve, location,
+  education, behavioral signals) to shortlist the top 300. A local
+  cross-encoder (ms-marco-MiniLM-L-6-v2) re-ranks these 300 candidate-JD
+  pairs for deep relevance judgment, fully offline. Final score blends 40%
+  composite with 60% cross-encoder output. A skill-trust formula combining
+  proficiency, duration, endorsements, and platform assessment scores
+  defeats keyword-stuffing; an evidence-accumulation honeypot detector flags
+  impossible career timelines and proficiency claims. Behavioral signals
+  apply smooth multiplicative penalties rather than hard cutoffs. Online
+  runtime is under 90 seconds for the full 100K pool on CPU, with
+  embeddings pre-computed offline.
+
+# ============================================================================
+# Declarations
+# ============================================================================
+declarations:
+  read_submission_spec: true
+  code_is_original_work: true
+  no_collusion: true
+  honeypot_check_done: true        # evidence-accumulation honeypot detector built and run
+  reproduction_tested: true       # TODO — set true only after you've actually run
+                                    # `python rank.py --candidates ./candidates.jsonl --out ./submission.csv`
+                                    # end-to-end yourself and confirmed it produces a valid CSV

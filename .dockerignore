@@ -1,0 +1,27 @@
+# ── Ignore Frontend and Node Modules ──────────────────────────────────────────
+FRONTEND/
+node_modules/
+.git/
+.github/
+.vscode/
+
+# ── Ignore Python dev files ───────────────────────────────────────────────────
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+
+# ── Ignore local environment variables (set on HF Space settings instead) ─────
+**/.env
+**/.env.*
+!**/.env.example
+
+# ── Ignore temporary/dev files ────────────────────────────────────────────────
+**/scratch/
+**/*.ipynb
+candidate_embeddings.npy.tmp
+candidate_embeddings.ids.json.tmp
