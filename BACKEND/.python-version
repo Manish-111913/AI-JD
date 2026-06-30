@@ -1,4 +1,1 @@
-# ── Render Deployment — Python Runtime ────────────────────────────────────────
-# Render uses .python-version (or the PYTHON_VERSION env var) to select the
-# Python interpreter.  This file guarantees 3.11 is used regardless of env var.
 3.11.9
