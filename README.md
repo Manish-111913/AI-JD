@@ -70,6 +70,22 @@ See the **Top 100 candidates** ranked by score, with a detailed breakdown of *wh
 
 ---
 
+## ⚡ Deployment & Network Performance Note
+
+When deploying the candidate ranking backend to cloud platforms (such as Hugging Face Spaces):
+
+1. **Upload Speed is Internet-Dependent:**
+   The `candidates.jsonl` file is typically large (often 50 MB - 100 MB+). When running locally, uploads are instantaneous. In a cloud deployment, uploading the file requires sending it over the internet. The "Uploading to backend..." phase will take time proportional to your internet connection's **upload speed**.
+   *(For example: A 60 MB file takes about 40–50 seconds on a standard 10 Mbps upload link).*
+
+2. **Cloud CPU Limits (Parsing):**
+   Free hosting tiers (like Hugging Face Spaces CPU Basic) run on shared cloud vCPUs. Parsing and validating tens of thousands of JSON lines dynamically will take slightly longer on a shared VM than on a fast local development processor.
+
+3. **Recommendation for Rapid Testing:**
+   For local development, testing, and debugging, we recommend using a **smaller subset of candidates** (e.g. `sample_candidates.json` or a file with 1,000–5,000 rows). This makes network transfer and parsing near-instantaneous.
+
+---
+
 ## Two Modes
 
 ### 🏆 Competition Mode *(Default — works offline, no API keys needed)*
