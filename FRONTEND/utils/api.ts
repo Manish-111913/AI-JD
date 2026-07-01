@@ -3,7 +3,7 @@
  * Connects the Next.js frontend to the Python ranking backend.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://manish111913-ai-jd.hf.space";
 
 export interface BackendStatus {
   status: "idle" | "loading" | "ranking" | "done" | "error";
