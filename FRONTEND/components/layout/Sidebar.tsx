@@ -23,7 +23,6 @@ const NAV = [
     { href: "/results", icon: ListOrdered, label: "Results" },
     { href: "/analytics", icon: BarChart3, label: "Analytics" },
     { href: "/ce-inspector", icon: Cpu, label: "CE Inspector" },
-    { href: "/export", icon: Download, label: "Export" },
   ]},
   { section: "AI Mode", items: [
     { href: "/api-settings", icon: Key, label: "API Settings" },

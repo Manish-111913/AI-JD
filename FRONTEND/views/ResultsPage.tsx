@@ -10,6 +10,14 @@ import {
 import { useAppContext, BackendResult } from "@/store/appStore";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -274,7 +282,7 @@ function CandidatePanel({ candidate, onClose, executionMode, jdSkills }: {
   const delta = candidate.rank_delta || (candidate.algo_rank - candidate.rank);
 
   const getFeatureVal = (key: string): number => {
-    const v = feat[key];
+    const v = feat[key] !== undefined ? feat[key] : (candidate as any)[key];
     return typeof v === "number" ? v : 0;
   };
 
@@ -810,22 +818,56 @@ export default function ResultsPage() {
   ].filter(Boolean).length;
 
   const exportCsv = useCallback(() => {
-    const rows = allResults.map(r => ({
-      rank: r.rank,
-      candidate_id: r.candidate_id,
-      title: r.current_title,
-      company: r.current_company,
-      location: r.location,
-      yoe: r.years_of_experience,
-      final_score: r.final_score,
-      ce_score: r.ce_score,
-      algo_rank: r.algo_rank,
-      honeypot_confidence: r.honeypot_confidence || 0,
-    }));
-    const header = Object.keys(rows[0]).join(",");
-    const csv = [header, ...rows.map(r => Object.values(r).join(","))].join("\n");
+    if (allResults.length === 0) return;
+    
+    const rows = allResults.map(r => {
+      const semanticScore = Number(r.features?.skill_semantic_component || r.features?.semantic_score || (r as any).skill_semantic_component || (r as any).semantic_score || 0);
+      const featureScore = Number(r.features?.skill_keyword_component || r.features?.skill_score || (r as any).skill_keyword_component || (r as any).skill_score || 0);
+      const aiRec = r.final_score >= 0.8 ? "Strong Hire" : r.final_score >= 0.65 ? "Consider" : "Pass";
+      const keySkills = (r.skills && r.skills.length > 0) ? r.skills.slice(0, 3).map(s => s.name).join(", ") : "N/A";
+      const candidateName = (r.anonymized_name as string) || (r.profile as any)?.anonymized_name || `Candidate ${r.candidate_id.split("-").pop() || r.candidate_id}`;
+      const ceDisplay = r.ce_score !== undefined ? (r.ce_score <= 1 ? Math.round(r.ce_score * 100) : Math.round(r.ce_score)) : 0;
+      const sig = r.redrob_signals;
+      const isAvail = sig ? (sig.open_to_work_flag || (sig.recruiter_response_rate ?? 0) > 0.4) : false;
+
+      return {
+        "Rank": r.rank,
+        "Candidate ID": r.candidate_id,
+        "Name": candidateName,
+        "Current Title": r.current_title,
+        "Current Company": r.current_company,
+        "Experience (Yrs)": r.years_of_experience,
+        "Location": r.location || "Unknown",
+        "Overall Score": r.final_score.toFixed(3),
+        "Match %": `${Math.round(r.final_score * 100)}%`,
+        "AI Recommendation": aiRec,
+        "Key Skills": keySkills,
+        "Semantic Score": semanticScore.toFixed(3),
+        "Feature Score": featureScore.toFixed(3),
+        "Cross-Encoder Score": ceDisplay,
+        "Availability": isAvail ? "Yes" : "No",
+        "Honeypot Check": `${Math.round((r.honeypot_confidence || 0) * 100)}%`,
+        "Reasoning": r.reasoning || r.ce_reasoning || "N/A"
+      };
+    });
+
+    const header = Object.keys(rows[0]);
+    const escapeCsv = (val: any) => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+    
+    const csvContent = [
+      header.map(escapeCsv).join(","),
+      ...rows.map(r => Object.values(r).map(escapeCsv).join(","))
+    ].join("\n");
+    
     const a = document.createElement("a");
-    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csvContent);
     a.download = `ranked_candidates_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
   }, [allResults]);
@@ -1076,118 +1118,143 @@ export default function ResultsPage() {
               </div>
             </div>
           ) : (
-            <table className="w-full text-[12px]">
-              <thead className="sticky top-0 bg-background border-b border-border z-10">
-                <tr>
-                  {[
-                    { label: "Rank", w: "56px" },
-                    { label: "Score", w: "70px" },
-                    { label: "CE Score", w: "76px" },
-                    { label: "Δ Rank", w: "64px" },
-                    { label: "Candidate", w: "auto" },
-                    { label: "YoE", w: "48px" },
-                    { label: "Location", w: "120px" },
-                    { label: "Honeypot", w: "80px" },
-                    { label: "Avail", w: "48px" },
-                  ].map(col => (
-                    <th key={col.label} className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground" style={{ width: col.w }}>
-                      {col.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageData.map((c, i) => {
-                  const delta = c.rank_delta ?? (c.algo_rank - c.rank);
-                  const ceRaw = c.ce_score || 0;
-                  const ceDisplay = ceRaw <= 1 ? Math.round(ceRaw * 100) : Math.round(ceRaw);
-                  const isHoneypot = (c.honeypot_confidence || 0) > 0.55;
-                  // Check if this candidate matches JD experience range
-                  const expInRange = jdData && c.years_of_experience >= jdExpMin && c.years_of_experience <= jdExpMax;
-                  return (
-                    <motion.tr
-                      key={c.candidate_id}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: i * 0.02 }}
-                      onClick={() => setSelectedCandidate(c)}
-                      className={`
-                        border-b border-border/50 cursor-pointer transition-colors hover:bg-muted/40
-                        ${selectedCandidate?.candidate_id === c.candidate_id ? "bg-muted/60" : ""}
-                        ${c.rank <= 10 ? "bg-emerald-50/30 dark:bg-emerald-950/10" : ""}
-                        ${isHoneypot ? "opacity-60" : ""}
-                      `}
-                    >
-                      <td className="px-3 py-2.5">
-                        <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-bold ${
-                          c.rank <= 10 ? "bg-foreground text-background" : "bg-muted text-foreground"
-                        }`}>
-                          {c.rank}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`font-mono font-semibold ${getScoreColor(c.final_score)}`}>
-                          {c.final_score.toFixed(3)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className="ai-badge text-[11px] font-mono font-bold px-2 py-0.5 rounded-[4px]">
-                          {ceDisplay}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {delta === 0 ? (
-                          <span className="flex items-center gap-0.5 text-muted-foreground"><Minus className="w-3 h-3" />0</span>
-                        ) : delta > 0 ? (
-                          <span className="flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400 font-semibold"><TrendingUp className="w-3 h-3" />+{delta}</span>
-                        ) : (
-                          <span className="flex items-center gap-0.5 text-red-500 font-semibold"><TrendingDown className="w-3 h-3" />{delta}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5" style={{ maxWidth: selectedCandidate ? "180px" : "350px" }}>
-                        <div className="font-medium text-foreground truncate flex items-center gap-1.5" title={c.current_title}>
-                          {isHoneypot && <Shield className="w-3 h-3 text-amber-500 flex-shrink-0" />}
-                          {c.current_title}
-                        </div>
-                        <div className="text-muted-foreground truncate text-[11px]" title={c.current_company}>{c.current_company}</div>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`font-mono font-semibold ${
-                          expInRange
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-foreground"
-                        }`}>
-                          {c.years_of_experience?.toFixed(1)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span 
-                          className="text-muted-foreground truncate block text-[11px]"
-                          style={{ maxWidth: selectedCandidate ? "100px" : "200px" }}
-                          title={c.location}
-                        >
-                          {c.location}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] font-mono font-bold text-[11px] ${
-                          (c.honeypot_confidence || 0) > 0.55
-                            ? "bg-red-500/10 text-red-500 border border-red-500/20"
-                            : (c.honeypot_confidence || 0) > 0.30
-                            ? "bg-amber-500/10 text-amber-500 border border-amber-500/20"
-                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/10"
-                        }`}>
-                          {Math.round((c.honeypot_confidence || 0) * 100)}%
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`inline-block w-2 h-2 rounded-full ${getAvail(c)}`} />
-                      </td>
-                    </motion.tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="w-full relative border rounded-md shadow-sm bg-card">
+              <Table className="text-[12px] min-w-max">
+                <TableHeader className="sticky top-0 bg-muted/80 backdrop-blur-sm z-20 border-b">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[60px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Rank</TableHead>
+                    <TableHead className="w-[100px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Candidate ID</TableHead>
+                    <TableHead className="w-[150px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Name</TableHead>
+                    <TableHead className="w-[180px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Current Role</TableHead>
+                    <TableHead className="w-[100px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Experience</TableHead>
+                    <TableHead className="w-[150px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Location</TableHead>
+                    <TableHead className="w-[120px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Overall Score</TableHead>
+                    <TableHead className="w-[100px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Match %</TableHead>
+                    <TableHead className="w-[160px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">AI Recommendation</TableHead>
+                    <TableHead className="w-[200px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Key Skills</TableHead>
+                    <TableHead className="w-[130px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Semantic Score</TableHead>
+                    <TableHead className="w-[130px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Feature Score</TableHead>
+                    <TableHead className="w-[150px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Cross-Encoder</TableHead>
+                    <TableHead className="w-[100px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Availability</TableHead>
+                    <TableHead className="w-[130px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Honeypot Check</TableHead>
+                    <TableHead className="w-[300px] uppercase text-[10px] font-bold text-muted-foreground tracking-widest whitespace-nowrap px-4 h-10">Reasoning</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pageData.map((c, i) => {
+                    const delta = c.rank_delta ?? (c.algo_rank - c.rank);
+                    const ceRaw = c.ce_score || 0;
+                    const ceDisplay = ceRaw <= 1 ? Math.round(ceRaw * 100) : Math.round(ceRaw);
+                    const isHoneypot = (c.honeypot_confidence || 0) > 0.55;
+                    const expInRange = jdData && c.years_of_experience >= jdExpMin && c.years_of_experience <= jdExpMax;
+                    const semanticScore = Number(c.features?.skill_semantic_component || c.features?.semantic_score || (c as any).skill_semantic_component || (c as any).semantic_score || 0);
+                    const featureScore = Number(c.features?.skill_keyword_component || c.features?.skill_score || (c as any).skill_keyword_component || (c as any).skill_score || 0);
+                    const aiRec = c.final_score >= 0.8 ? "Strong Hire" : c.final_score >= 0.65 ? "Consider" : "Pass";
+                    const keySkills = (c.skills && c.skills.length > 0) ? c.skills.slice(0, 3).map(s => s.name).join(", ") : "N/A";
+                    const candidateName = (c.anonymized_name as string) || (c.profile as any)?.anonymized_name || `Candidate ${c.candidate_id.split("-").pop() || c.candidate_id}`;
+                    
+                    return (
+                      <TableRow
+                        key={c.candidate_id}
+                        onClick={() => setSelectedCandidate(c)}
+                        className={`
+                          cursor-pointer transition-colors
+                          ${selectedCandidate?.candidate_id === c.candidate_id ? "bg-muted/60" : ""}
+                          ${c.rank <= 10 ? "bg-emerald-50/30 dark:bg-emerald-950/10" : ""}
+                          ${isHoneypot ? "opacity-60" : ""}
+                        `}
+                      >
+                        <TableCell className="px-4 py-3 font-medium whitespace-nowrap">
+                          <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-bold ${
+                            c.rank <= 10 ? "bg-foreground text-background" : "bg-muted text-foreground"
+                          }`}>
+                            {c.rank}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 font-mono text-muted-foreground whitespace-nowrap">{c.candidate_id}</TableCell>
+                        <TableCell className="px-4 py-3 font-medium text-foreground whitespace-nowrap">{candidateName}</TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <div className="font-medium text-foreground max-w-[200px] truncate flex items-center gap-1.5" title={c.current_title}>
+                            {isHoneypot && <Shield className="w-3 h-3 text-amber-500 flex-shrink-0" />}
+                            {c.current_title}
+                          </div>
+                          <div className="text-muted-foreground text-[11px] truncate max-w-[200px]" title={c.current_company}>{c.current_company}</div>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <span className={`font-mono font-semibold ${
+                            expInRange ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
+                          }`}>
+                            {c.years_of_experience?.toFixed(1)} yrs
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <span className="text-muted-foreground truncate block max-w-[150px]" title={c.location}>
+                            {c.location}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <span className={`font-mono font-semibold ${getScoreColor(c.final_score)}`}>
+                            {c.final_score.toFixed(3)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <span className="font-mono text-foreground font-medium">
+                            {Math.round(c.final_score * 100)}%
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                            aiRec === "Strong Hire" ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border-emerald-200" :
+                            aiRec === "Consider" ? "bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 border-amber-200" :
+                            "bg-muted text-muted-foreground border-border"
+                          }`}>
+                            {aiRec}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <div className="max-w-[200px] truncate text-[11px] text-muted-foreground" title={keySkills}>
+                            {keySkills}
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 font-mono text-muted-foreground whitespace-nowrap">
+                          {semanticScore.toFixed(3)}
+                        </TableCell>
+                        <TableCell className="px-4 py-3 font-mono text-muted-foreground whitespace-nowrap">
+                          {featureScore.toFixed(3)}
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <span className="ai-badge text-[11px] font-mono font-bold px-2 py-0.5 rounded-[4px]">
+                            {ceDisplay}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 text-muted-foreground text-[11px]">
+                            <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${getAvail(c)}`} />
+                            {isAvailable(c) ? "Yes" : "No"}
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] font-mono font-bold text-[11px] ${
+                            isHoneypot
+                              ? "bg-red-500/10 text-red-500 border border-red-500/20"
+                              : (c.honeypot_confidence || 0) > 0.30
+                              ? "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/10"
+                          }`}>
+                            {Math.round((c.honeypot_confidence || 0) * 100)}%
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">
+                          <div className="max-w-[300px] truncate text-[11px] text-muted-foreground bg-muted/30 px-2 py-1 rounded" title={c.reasoning}>
+                            {c.reasoning || "No reasoning available"}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </div>
 
